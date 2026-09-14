@@ -1,0 +1,53 @@
+name: Repository rules
+
+on:
+  pull_request_target:
+    branches:
+      - main
+      - dev
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+  pull_request_review:
+    types:
+      - submitted
+      - dismissed
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  repository-rules:
+    name: Repository rules
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enforce branch policy
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$BASE_BRANCH" == "main" ]]; then
+            if [[ "$HEAD_BRANCH" != "dev" ]]; then
+              echo "Pull requests to main must come from dev."
+              exit 1
+            fi
+
+            approvals="$(gh pr view "$PR_NUMBER" --repo "$REPOSITORY" --json reviews --jq 'reduce .reviews[] as $review ({}; .[$review.author.login] = $review.state) | to_entries | map(select(.value == "APPROVED")) | length')"
+            if (( approvals < 3 )); then
+              echo "Pull requests to main need at least 3 approvals. Current approvals: $approvals."
+              exit 1
+            fi
+          elif [[ "$BASE_BRANCH" == "dev" ]]; then
+            if [[ "$HEAD_BRANCH" != feature/* ]]; then
+              echo "Pull requests to dev must come from feature/* branches."
+              exit 1
+            fi
+          fi
