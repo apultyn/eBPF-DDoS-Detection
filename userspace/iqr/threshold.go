@@ -22,6 +22,8 @@ package iqr
 import (
 	"sync"
 	"time"
+
+	"github.com/apultyn/eBPF-DDoS-Detection/userspace/flow"
 )
 
 // Config holds the tunable parameters of the IQR threshold model. All
@@ -99,7 +101,7 @@ type Detector struct {
 
 	mu            sync.Mutex
 	windowHistory *history
-	ipHistories   map[string]*history
+	ipHistories   map[flow.Key]*history
 }
 
 // NewDetector creates a Detector using the given configuration. Pass
@@ -108,14 +110,14 @@ func NewDetector(cfg Config) *Detector {
 	return &Detector{
 		cfg:           cfg,
 		windowHistory: newHistory(cfg.MaxHistorySize),
-		ipHistories:   make(map[string]*history),
+		ipHistories:   make(map[flow.Key]*history),
 	}
 }
 
 // EvaluateWindow compares stats.TotalPackets against the current
 // window-level threshold and returns the verdict. If the window is not
 // malicious, its total is folded into the history used for future thresholds;
-// if it is malicious, history is left untouched so the attack doesn't skew 
+// if it is malicious, history is left untouched so the attack doesn't skew
 // its own baseline.
 func (d *Detector) EvaluateWindow(stats WindowStats) Verdict {
 	d.mu.Lock()
@@ -151,7 +153,7 @@ func (d *Detector) EvaluateWindow(stats WindowStats) Verdict {
 // still gets folded into its own baseline (since windowIsMalicious is
 // false in that case), which could raise its future threshold. The thesis
 // doesn't address this edge case.
-func (d *Detector) EvaluateIP(ip string, count uint64, windowIsMalicious bool) Verdict {
+func (d *Detector) EvaluateIP(ip flow.Key, count uint64, windowIsMalicious bool) Verdict {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 

@@ -2,7 +2,7 @@
 
 ## Overview
 
-The `userspace/iqr` package implements the interquartile-range (IQR) threshold model used by the baseline DDoS detector. It evaluates both total packet counts for a closed time window and packet counts for individual source IPs.
+The `userspace/iqr` package implements the interquartile-range (IQR) threshold model used by the baseline DDoS detector. It evaluates both total packet counts for a closed time window and packet counts for individual source IPs represented by `flow.Key`.
 
 The model learns from recent normal-traffic samples. A sample that is flagged malicious is not added to the corresponding history, preventing attack traffic from raising the threshold used by later evaluations.
 
@@ -37,7 +37,7 @@ The floor applies to the IQR-based base before the standard-deviation offset is 
 
 `DefaultConfig` uses the thesis parameters `FloorValue = 200`, `IQRMultiplier = 1.5`, and `OffsetMultiplier = 2`. It also supplies package defaults of four minimum samples and a maximum history size of 500.
 
-`NewDetector` creates an empty window history and an initially empty map of per-IP histories. `MaxHistorySize` values less than or equal to zero are normalized by `newHistory` to a capacity of one. Other configuration values are accepted as provided; callers should configure them deliberately.
+`NewDetector` creates an empty window history and an initially empty map of per-IP histories keyed by `flow.Key`. `MaxHistorySize` values less than or equal to zero are normalized by `newHistory` to a capacity of one. Other configuration values are accepted as provided; callers should configure them deliberately.
 
 ### Window evaluation
 
@@ -47,7 +47,7 @@ The floor applies to the IQR-based base before the standard-deviation offset is 
 
 ### Per-IP evaluation
 
-`EvaluateIP` creates a separate history for each IP. During warm-up, samples are added only when the enclosing window is not malicious. After warm-up, the IP count is compared with that IP's threshold.
+`EvaluateIP` creates a separate history for each `flow.Key`. During warm-up, samples are added only when the enclosing window is not malicious. After warm-up, the IP count is compared with that IP's threshold.
 
 When `windowIsMalicious` is true, the IP history is frozen regardless of the individual IP verdict. This prevents traffic from a malicious window from contaminating any per-IP baseline. When the enclosing window is normal, the observed IP count is added after evaluation, including a count that is individually flagged malicious. That behavior matches the package's documented interpretation of the thesis and is an intentional edge-case policy.
 
@@ -93,7 +93,7 @@ The package currently has no benchmark functions. Performance is dominated by so
 - Threshold calculation allocates a copy of the history for sorting on every evaluated sample.
 - Counts are converted from `uint64` to `float64`; extremely large counts can lose integer precision.
 - The implementation uses sample standard deviation (`n - 1` denominator), although the thesis does not specify whether sample or population deviation is intended.
-- The detector does not validate IP string syntax; the IP value is treated as an opaque history key.
+- IP parsing and representation are owned by the `flow` package; the detector treats each `flow.Key` as an opaque history key.
 
 ## Summary
 

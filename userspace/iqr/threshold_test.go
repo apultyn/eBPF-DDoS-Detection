@@ -3,6 +3,8 @@ package iqr
 import (
 	"math"
 	"testing"
+
+	"github.com/apultyn/eBPF-DDoS-Detection/userspace/flow"
 )
 
 func approxEqual(t *testing.T, got, want, tolerance float64) {
@@ -134,7 +136,7 @@ func TestDetector_EvaluateIP_FreezesDuringMaliciousWindow(t *testing.T) {
 		MaxHistorySize:   50,
 	}
 	d := NewDetector(cfg)
-	const ip = "10.0.0.5"
+	ip := flow.MustParse("10.0.0.5")
 
 	// Warm-up: two calls, neither compared against a real threshold yet.
 	// History becomes {50, 60}.
@@ -174,10 +176,12 @@ func TestDetector_EvaluateIP_SeparateHistoryPerIP(t *testing.T) {
 	d := NewDetector(cfg)
 
 	// Two different IPs should not influence each other's thresholds.
-	d.EvaluateIP("10.0.0.1", 1000000, false) // huge, but still warm-up so not malicious
-	d.EvaluateIP("10.0.0.1", 1000000, false)
+	ip1 := flow.MustParse("10.0.0.1")
+	ip2 := flow.MustParse("10.0.0.2")
+	d.EvaluateIP(ip1, 1000000, false) // huge, but still warm-up so not malicious
+	d.EvaluateIP(ip1, 1000000, false)
 
-	v := d.EvaluateIP("10.0.0.2", 50, false)
+	v := d.EvaluateIP(ip2, 50, false)
 	if v.Threshold != cfg.FloorValue {
 		t.Fatalf("expected a brand-new IP to start warm-up at the floor threshold, got %v", v.Threshold)
 	}
