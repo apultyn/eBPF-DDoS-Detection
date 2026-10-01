@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"math/rand"
 	"testing"
+
+	"github.com/apultyn/eBPF-DDoS-Detection/userspace/flow"
 )
 
 func TestNew_ValidatesParameters(t *testing.T) {
@@ -44,13 +46,14 @@ func TestNew_ValidatesParameters(t *testing.T) {
 func TestSketch_AddAndEstimate_SingleKey(t *testing.T) {
 	s := NewWithDimensions(64, 4)
 
-	s.Add("10.0.0.1", 5)
-	s.Add("10.0.0.1", 3)
+	key := flow.MustParse("10.0.0.1")
+	s.Add(key, 5)
+	s.Add(key, 3)
 
-	if got := s.Estimate("10.0.0.1"); got != 8 {
+	if got := s.Estimate(key); got != 8 {
 		t.Errorf("Estimate(10.0.0.1) = %d, want 8", got)
 	}
-	if got := s.Estimate("10.0.0.2"); got != 0 {
+	if got := s.Estimate(flow.MustParse("10.0.0.2")); got != 0 {
 		t.Errorf("Estimate(10.0.0.2) = %d, want 0 for an unseen key", got)
 	}
 }
@@ -66,9 +69,9 @@ func TestSketch_NeverUndercounts(t *testing.T) {
 	s := NewWithDimensions(width, depth)
 
 	rng := rand.New(rand.NewSource(1))
-	trueCounts := make(map[string]uint64)
+	trueCounts := make(map[flow.Key]uint64)
 	for i := 0; i < 500; i++ {
-		key := fmt.Sprintf("10.0.%d.%d", rng.Intn(20), rng.Intn(20))
+		key := flow.MustParse(fmt.Sprintf("10.0.%d.%d", rng.Intn(20), rng.Intn(20)))
 		delta := uint64(rng.Intn(5) + 1)
 		s.Add(key, delta)
 		trueCounts[key] += delta
@@ -94,11 +97,11 @@ func TestSketch_ErrorBound(t *testing.T) {
 	}
 
 	rng := rand.New(rand.NewSource(42))
-	trueCounts := make(map[string]uint64)
+	trueCounts := make(map[flow.Key]uint64)
 	const numKeys = 200
 	const totalInserts = 20000
 	for i := 0; i < totalInserts; i++ {
-		key := fmt.Sprintf("key-%d", rng.Intn(numKeys))
+		key := flow.MustParse(fmt.Sprintf("10.0.0.%d", rng.Intn(numKeys)))
 		s.Add(key, 1)
 		trueCounts[key]++
 	}
@@ -115,7 +118,8 @@ func TestSketch_ErrorBound(t *testing.T) {
 
 func TestSketch_Reset(t *testing.T) {
 	s := NewWithDimensions(32, 4)
-	s.Add("10.0.0.1", 10)
+	key := flow.MustParse("10.0.0.1")
+	s.Add(key, 10)
 
 	if s.Total() == 0 {
 		t.Fatal("expected non-zero total before Reset")
@@ -123,7 +127,7 @@ func TestSketch_Reset(t *testing.T) {
 
 	s.Reset()
 
-	if got := s.Estimate("10.0.0.1"); got != 0 {
+	if got := s.Estimate(key); got != 0 {
 		t.Errorf("Estimate(10.0.0.1) after Reset = %d, want 0", got)
 	}
 	if s.Total() != 0 {
@@ -133,9 +137,9 @@ func TestSketch_Reset(t *testing.T) {
 
 func BenchmarkAdd(b *testing.B) {
 	s := NewWithDimensions(2048, 5)
-	keys := make([]string, 1000)
+	keys := make([]flow.Key, 1000)
 	for i := range keys {
-		keys[i] = fmt.Sprintf("10.0.%d.%d", i/256, i%256)
+		keys[i] = flow.MustParse(fmt.Sprintf("10.0.%d.%d", i/256, i%256))
 	}
 
 	b.ResetTimer()
@@ -146,9 +150,9 @@ func BenchmarkAdd(b *testing.B) {
 
 func BenchmarkEstimate(b *testing.B) {
 	s := NewWithDimensions(2048, 5)
-	keys := make([]string, 1000)
+	keys := make([]flow.Key, 1000)
 	for i := range keys {
-		keys[i] = fmt.Sprintf("10.0.%d.%d", i/256, i%256)
+		keys[i] = flow.MustParse(fmt.Sprintf("10.0.%d.%d", i/256, i%256))
 		s.Add(keys[i], 1)
 	}
 

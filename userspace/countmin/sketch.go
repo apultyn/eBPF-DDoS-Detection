@@ -1,6 +1,6 @@
 // Package countmin implements a Count-Min Sketch: a probabilistic data
 // structure that estimates the frequency of items in a data stream using
-// sub-linear memory.
+// sub-linear memory using flow keys.
 //
 // The sketch never underestimates a true count, but may overestimate it
 // due to hash collisions. Width (w) and depth (d) of the counter matrix
@@ -25,8 +25,9 @@ package countmin
 
 import (
 	"errors"
-	"hash/maphash"
 	"math"
+
+	"github.com/apultyn/eBPF-DDoS-Detection/userspace/flow"
 )
 
 // Sketch is a Count-Min Sketch counter matrix.
@@ -37,7 +38,7 @@ type Sketch struct {
 	width  uint64
 	depth  uint64
 	counts [][]uint64
-	seeds  []maphash.Seed
+	seeds  []uint32
 	total  uint64 // running sum of all deltas passed to Add
 }
 
@@ -76,10 +77,10 @@ func NewWithDimensions(width, depth uint64) *Sketch {
 	}
 
 	counts := make([][]uint64, depth)
-	seeds := make([]maphash.Seed, depth)
+	seeds := make([]uint32, depth)
 	for i := range counts {
 		counts[i] = make([]uint64, width)
-		seeds[i] = maphash.MakeSeed()
+		seeds[i] = flow.Mix32(uint32(i) + 0x9e3779b9)
 	}
 
 	return &Sketch{
@@ -93,9 +94,10 @@ func NewWithDimensions(width, depth uint64) *Sketch {
 // Add increments the estimated count for key by delta. Passing delta = 1
 // per observed packet is the common case; a caller that has already
 // pre-aggregated counts for a key can pass the aggregate directly.
-func (s *Sketch) Add(key string, delta uint64) {
+func (s *Sketch) Add(key flow.Key, delta uint64) {
+	hash := key.Hash()
 	for row, seed := range s.seeds {
-		col := maphash.String(seed, key) % s.width
+		col := uint64(flow.Mix32(hash^seed)) % s.width
 		s.counts[row][col] += delta
 	}
 	s.total += delta
@@ -104,14 +106,15 @@ func (s *Sketch) Add(key string, delta uint64) {
 // Estimate returns the estimated frequency of key. The result is never
 // lower than the true count for key, but may be higher due to hash
 // collisions with other keys.
-func (s *Sketch) Estimate(key string) uint64 {
+func (s *Sketch) Estimate(key flow.Key) uint64 {
 	if s.depth == 0 {
 		return 0
 	}
 
+	hash := key.Hash()
 	min := uint64(math.MaxUint64)
 	for row, seed := range s.seeds {
-		col := maphash.String(seed, key) % s.width
+		col := uint64(flow.Mix32(hash^seed)) % s.width
 		if c := s.counts[row][col]; c < min {
 			min = c
 		}
