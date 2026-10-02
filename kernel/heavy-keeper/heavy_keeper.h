@@ -71,6 +71,11 @@
 #endif
 /* ============================================================ */
 
+/* Upper boundry for CPU number as of year 2026 */
+#ifndef HK_MAX_CPUS
+#define HK_MAX_CPUS 4096
+#endif
+
 /* Sketch bucket */
 struct hk_bucket
 {
@@ -116,9 +121,6 @@ struct hk_state
 /* Structure storing blocked element by the algorithm */
 struct hk_block
 {
-    __u64 until_ns; /* bpf_ktime_get_coarse_ns() time the block ends    */
-    __u64 since_ns; /* when the block was created                       */
-    __u32 estimate; /* summed estimate in the window that triggered it   */
 };
 
 /* The sketch's view of a key: where it lives in each row and its fingerprint */

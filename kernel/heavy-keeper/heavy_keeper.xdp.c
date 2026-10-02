@@ -16,9 +16,12 @@ volatile const __u32 hk_prefix_v4 = HK_PREFIX_V4;
 volatile const __u32 hk_prefix_v6 = HK_PREFIX_V6;
 volatile const __u32 hk_enforce = HK_ENFORCE;
 volatile const __u64 hk_window_ns = HK_WINDOW_MS * 1000000ULL;
-// volatile const __u64 hk_block_ns = HK_BLOCK_MS * 1000000ULL;
 volatile const __u32 hk_threshold_v4 = HK_THRESHOLD_V4;
 volatile const __u32 hk_threshold_v6 = HK_THRESHOLD_V6;
+
+volatile const __u32 hk_decay_lut[HK_DECAY_LUT_SIZE] = {
+#include "hk_decay_lut.h"
+};
 
 /* ============================================================
  * Maps
@@ -72,6 +75,11 @@ static __always_inline __u64 hk_mix64(__u64 z)
     return z;
 }
 
+static __always_inline __u32 hk_word(const struct hk_key *k, int i)
+{
+    return bpf_ntohl(((const __be32 *)k->addr)[i]);
+}
+
 static __always_inline __u32 hk_seed(__u32 row)
 {
     return hk_mix32(row + HK_SEED_BASE);
@@ -95,15 +103,6 @@ static __always_inline void hk_hash_key(const struct hk_key *k,
     h->fp = (__u16)(hk_mix32(hi ^ HK_FP_SALT) >> 16);
 }
 
-static __always_inline void hk_mask_key(struct hk_key *k, int len)
-{
-    __be32 *w = (__be32 *)k->addr;
-
-#pragma unroll
-    for (int i = 0; i < 4; i++)
-        w[i] = hk_mask_word(w[i], len - 32 * i);
-}
-
 static __always_inline __be32 hk_mask_word(__be32 w, int bits)
 {
     if (bits <= 0)
@@ -111,6 +110,15 @@ static __always_inline __be32 hk_mask_word(__be32 w, int bits)
     if (bits >= 32)
         return w;
     return bpf_htonl(bpf_ntohl(w) & (~0u << (32 - bits)));
+}
+
+static __always_inline void hk_mask_key(struct hk_key *k, int len)
+{
+    __be32 *w = (__be32 *)k->addr;
+
+#pragma unroll
+    for (int i = 0; i < 4; i++)
+        w[i] = hk_mask_word(w[i], len - 32 * i);
 }
 
 static __always_inline enum hk_parse hk_parse_key(void *data, void *data_end,
@@ -148,6 +156,126 @@ static __always_inline enum hk_parse hk_parse_key(void *data, void *data_end,
         return HK_PARSE_IPV6;
     }
     return HK_PARSE_OTHER;
+}
+
+/* ============================================================
+ * HeavyKeeper insert
+ * ============================================================ */
+
+static __always_inline __u32 hk_insert(struct hk_sketch *sk,
+                                       const struct hk_hash *h)
+{
+    __u16 fp = h->fp;
+    __u32 best = 0;
+
+#pragma unroll
+    for (__u32 row = 0; row < HK_HEIGHT; row++)
+    {
+        __u32 s = h->slot[row];
+        if (s >= HK_BUCKETS)
+            return best;
+
+        struct hk_bucket *b = &sk->b[s];
+        __u32 c = b->count;
+
+        if (c == 0)
+        {
+            /* Empty bucket: claim it. */
+            b->fp = fp;
+            b->count = 1;
+            if (best < 1)
+                best = 1;
+        }
+        else if (b->fp == fp)
+        {
+            /* Same flow. Saturate rather than wrap. */
+            if (c < HK_MAX_COUNT)
+                b->count = ++c;
+            if (c > best)
+                best = c;
+        }
+        else if (c < HK_DECAY_LUT_SIZE &&
+                 bpf_get_prandom_u32() < hk_decay_lut[c])
+        {
+            /*
+             * Held by another flow: exponential-weakening decay.
+             * At or above the table size the decay probability is
+             * zero, so the random draw is skipped.
+             */
+            if (--c == 0)
+            {
+                /* The previous owner has been evicted. */
+                b->fp = fp;
+                b->count = 1;
+                if (best < 1)
+                    best = 1;
+            }
+            else
+            {
+                b->count = c;
+            }
+        }
+    }
+
+    return best;
+}
+
+/* ============================================================
+ * Cross-CPU estimate
+ * ============================================================ */
+
+struct hk_sum_ctx
+{
+    __u64 epoch;
+    struct hk_hash h;
+    __u32 total;
+};
+
+static long hk_sum_cpu(__u32 cpu, void *data)
+{
+    struct hk_sum_ctx *ctx = data;
+    __u32 zero = 0;
+
+    struct hk_state *st = bpf_map_lookup_percpu_elem(&hk_state, &zero, cpu);
+    if (!st)
+        return 1; /* past the last possible CPU */
+
+    /* A CPU that has not seen this window yet holds stale counts. */
+    if (st->epoch != ctx->epoch)
+        return 0;
+
+    struct hk_sketch *sk = bpf_map_lookup_percpu_elem(&hk_sketch, &zero, cpu);
+    if (!sk)
+        return 1;
+
+    __u32 best = 0;
+
+#pragma unroll
+    for (int row = 0; row < HK_HEIGHT; row++)
+    {
+        __u32 s = ctx->h.slot[row];
+        if (s >= HK_BUCKETS)
+            return 1;
+
+        struct hk_bucket *b = &sk->b[s];
+        if (b->fp == ctx->h.fp && b->count > best)
+            best = b->count;
+    }
+
+    ctx->total += best;
+    return 0;
+}
+
+static __always_inline __u32 hk_global_estimate(const struct hk_hash *h,
+                                                __u64 epoch)
+{
+    struct hk_sum_ctx ctx = {
+        .epoch = epoch,
+        .h = *h,
+    };
+
+    bpf_loop(HK_MAX_CPUS, hk_sum_cpu, &ctx, 0);
+    return ctx.total;
 }
 
 /* ============================================================
@@ -262,11 +390,7 @@ int xdp_heavykeeper(struct xdp_md *ctx)
     if (blocked)
         return XDP_PASS;
 
-    struct hk_block nb = {
-        .until_ns = now /* + hk_block_ns */,
-        .since_ns = now,
-        .estimate = est,
-    };
+    struct hk_block nb = {};
     bpf_map_update_elem(&hk_blocklist, &key, &nb, BPF_ANY);
     st->blocked++;
 
