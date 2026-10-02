@@ -10,6 +10,16 @@
 #define HK_SEED_BASE 0x9e3779b9u
 #define HK_KEY_SEED 0x9e3779b97f4a7c15ull
 
+/* Mask sizes for IP addresses */
+#ifndef HK_PREFIX_V4
+#define HK_PREFIX_V4 32
+#endif
+
+#ifndef HK_PREFIX_V6
+#define HK_PREFIX_V6 64
+#endif
+/* =========================== */
+
 /* Height of sketch (and amount of hash functions) */
 #ifndef HK_HEIGHT
 #define HK_HEIGHT 4
@@ -36,6 +46,30 @@
 #ifndef HK_BLOCK_ENTRIES
 #define HK_BLOCK_ENTRIES 65536
 #endif
+
+/* 0: just log blocked packets
+ * 1: drop blocked packets */
+#ifndef HK_ENFORCE
+#define HK_ENFORCE 0
+#endif
+
+/* Window length in ms */
+#ifndef HK_WINDOW_MS
+#define HK_WINDOW_MS 1000
+#endif
+
+/* ============================================================
+ * Packets per window from one key that trigger a block,
+ * per IP family
+ * ============================================================ */
+#ifndef HK_THRESHOLD_V4
+#define HK_THRESHOLD_V4 50000
+#endif
+
+#ifndef HK_THRESHOLD_V6
+#define HK_THRESHOLD_V6 100000
+#endif
+/* ============================================================ */
 
 /* Sketch bucket */
 struct hk_bucket
@@ -82,8 +116,9 @@ struct hk_state
 /* Structure storing blocked element by the algorithm */
 struct hk_block
 {
-    struct hk_key key;
-    __u64 timestamp;
+    __u64 until_ns; /* bpf_ktime_get_coarse_ns() time the block ends    */
+    __u64 since_ns; /* when the block was created                       */
+    __u32 estimate; /* summed estimate in the window that triggered it   */
 };
 
 /* The sketch's view of a key: where it lives in each row and its fingerprint */

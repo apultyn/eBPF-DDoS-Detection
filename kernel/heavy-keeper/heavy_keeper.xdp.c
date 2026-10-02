@@ -1,12 +1,24 @@
+#include <stdbool.h>
 #include <linux/bpf.h>
 #include <linux/if_ether.h>
 #include <linux/ip.h>
 #include <linux/ipv6.h>
-
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_endian.h>
 
 #include "heavy_keeper.h"
+
+/* ============================================================
+ * Casting allows libbpf loader to overwrite the values without
+ * recompilation
+ * ============================================================ */
+volatile const __u32 hk_prefix_v4 = HK_PREFIX_V4;
+volatile const __u32 hk_prefix_v6 = HK_PREFIX_V6;
+volatile const __u32 hk_enforce = HK_ENFORCE;
+volatile const __u64 hk_window_ns = HK_WINDOW_MS * 1000000ULL;
+// volatile const __u64 hk_block_ns = HK_BLOCK_MS * 1000000ULL;
+volatile const __u32 hk_threshold_v4 = HK_THRESHOLD_V4;
+volatile const __u32 hk_threshold_v6 = HK_THRESHOLD_V6;
 
 /* ============================================================
  * Maps
@@ -110,6 +122,7 @@ static __always_inline enum hk_parse hk_parse_key(void *data, void *data_end,
         return HK_PARSE_ERROR;
 
     __be16 proto = eth->h_proto;
+    __be32 *w = (__be32 *)key->addr;
 
     if (proto == bpf_htons(ETH_P_IP))
     {
@@ -124,14 +137,45 @@ static __always_inline enum hk_parse hk_parse_key(void *data, void *data_end,
         hk_mask_key(key, 96 + hk_prefix_v4);
         return HK_PARSE_IPV4;
     }
-    else if (proto == bpf_htons(ETH_P_IPV6))
+    if (proto == bpf_htons(ETH_P_IPV6))
     {
+        struct ipv6hdr *ip6 = cursor;
+        if ((void *)(ip6 + 1) > data_end)
+            return HK_PARSE_ERROR;
+
+        __builtin_memcpy(key->addr, &ip6->saddr, sizeof(key->addr));
+        hk_mask_key(key, hk_prefix_v6);
+        return HK_PARSE_IPV6;
     }
-    else
-    {
-        return HK_PARSE_OTHER;
-    }
+    return HK_PARSE_OTHER;
 }
+
+/* ============================================================
+ * Window reset
+ * ============================================================ */
+
+struct hk_clear_ctx
+{
+    struct hk_sketch *sk;
+};
+
+/* Clears one 64-byte cache line (eight buckets) per iteration. */
+static long hk_clear_line(__u32 i, void *data)
+{
+    struct hk_clear_ctx *ctx = data;
+
+    if (i >= HK_BUCKETS / 8)
+        return 1;
+
+    __u64 *line = (__u64 *)&ctx->sk->b[i * 8];
+
+#pragma unroll
+    for (int j = 0; j < 8; j++)
+        line[j] = 0;
+
+    return 0;
+}
+/* ============================================================ */
 
 SEC("xdp")
 int xdp_heavykeeper(struct xdp_md *ctx)
@@ -149,6 +193,90 @@ int xdp_heavykeeper(struct xdp_md *ctx)
 
     struct hk_key key;
     enum hk_parse kind = hk_parse_key(data, end, &key);
+
+    switch (kind)
+    {
+    case HK_PARSE_IPV4:
+    case HK_PARSE_IPV6:
+        break;
+    case HK_PARSE_OTHER:
+        st->non_ip++;
+        return XDP_PASS;
+    default:
+        st->malformed++;
+        return XDP_PASS;
+    }
+
+    __u64 now = bpf_ktime_get_coarse_ns();
+
+    /* 1. Check if already blocked */
+    bool blocked = false;
+    struct hk_block *blk = bpf_map_lookup_elem(&hk_blocklist, &key);
+    if (blk)
+    {
+        if (hk_enforce)
+        {
+            st->dropped++;
+            return XDP_DROP;
+        }
+    }
+
+    /* 2. Roll the window if needed */
+    __u64 epoch = now / hk_window_ns;
+    if (st->epoch != epoch)
+    {
+        struct hk_clear_ctx cc = {.sk = sk};
+        bpf_loop(HK_BUCKETS / 8, hk_clear_line, &cc, 0);
+        st->epoch = epoch;
+    }
+
+    __u32 threshold;
+    if (kind == HK_PARSE_IPV4)
+    {
+        st->ipv4++;
+        threshold = hk_threshold_v4;
+    }
+    else
+    {
+        st->ipv6++;
+        threshold = hk_threshold_v6;
+    }
+
+    /* 3. Count and decide */
+    struct hk_hash h;
+    hk_hash_key(&key, &h);
+
+    __u32 est = hk_insert(sk, &h);
+    if (est == 0 || threshold == 0)
+        return XDP_PASS;
+
+    if (est < threshold)
+    {
+        st->checks++;
+        est = hk_global_estimate(&h, epoch);
+        if (est < threshold)
+            return XDP_PASS;
+    }
+
+    /* Only for monitoring mode - no update needed */
+    if (blocked)
+        return XDP_PASS;
+
+    struct hk_block nb = {
+        .until_ns = now /* + hk_block_ns */,
+        .since_ns = now,
+        .estimate = est,
+    };
+    bpf_map_update_elem(&hk_blocklist, &key, &nb, BPF_ANY);
+    st->blocked++;
+
+    if (hk_enforce)
+    {
+        st->dropped++;
+        return XDP_DROP;
+    }
+
+    return XDP_PASS;
 }
 
 char LICENSE[] SEC("license") = "Dual BSD/GPL";
