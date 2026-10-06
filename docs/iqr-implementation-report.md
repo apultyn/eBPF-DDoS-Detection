@@ -22,7 +22,7 @@ For a history of normal-traffic samples, `history.threshold` performs these step
 1. Copies and sorts the samples.
 2. Computes the 25th percentile (`Q1`) and 75th percentile (`Q3`) using linear interpolation.
 3. Computes the interquartile range, `IQR = Q3 - Q1`.
-4. Computes the base threshold as `max(Q3 + IQRMultiplier * IQR, FloorValue)`.
+4. Computes the base threshold as `max(Q3 + IQRMultiplier * IQR, BaseThreshold)`.
 5. Adds `OffsetMultiplier * sampleStandardDeviation` to the base threshold.
 
 With `DefaultConfig`, the formula is:
@@ -35,7 +35,7 @@ The floor applies to the IQR-based base before the standard-deviation offset is 
 
 ### Detector construction and configuration
 
-`DefaultConfig` uses the thesis parameters `FloorValue = 200`, `IQRMultiplier = 1.5`, and `OffsetMultiplier = 2`. It also supplies package defaults of four minimum samples and a maximum history size of 500.
+`DefaultConfig` uses the thesis parameters `BaseThreshold = 200`, `IQRMultiplier = 1.5`, and `OffsetMultiplier = 2`. It also supplies package defaults of four minimum samples and a maximum history size of 500.
 
 `NewDetector` creates an empty window history and an initially empty map of per-IP histories keyed by `flow.Key`. `MaxHistorySize` values less than or equal to zero are normalized by `newHistory` to a capacity of one. Other configuration values are accepted as provided; callers should configure them deliberately.
 
@@ -97,4 +97,4 @@ The package currently has no benchmark functions. Performance is dominated by so
 
 ## Summary
 
-The `userspace/iqr` package provides a bounded, concurrent rolling-baseline detector for window-level and source-IP-level traffic counts. It combines Tukey-style IQR outlier detection with a configurable floor and standard-deviation offset, freezes histories during malicious windows, and avoids allowing flagged window samples to skew future thresholds. Its main operational considerations are warm-up behavior, retained per-IP state, and the cost of sorting histories during evaluation.
+The `userspace/iqr` package provides a bounded, concurrent rolling-baseline detector for window-level and source-IP-level traffic counts. It combines Tukey-style IQR outlier detection with a configurable base and standard-deviation offset, freezes histories during malicious windows, and avoids allowing flagged window samples to skew future thresholds. Its main operational considerations are warm-up behavior, retained per-IP state, and the cost of sorting histories during evaluation.

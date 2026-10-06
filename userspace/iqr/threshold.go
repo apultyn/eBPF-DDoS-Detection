@@ -8,7 +8,7 @@
 //	Q1  = 25th percentile of recent normal-traffic samples
 //	Q3  = 75th percentile of recent normal-traffic samples
 //	IQR = Q3 - Q1
-//	threshold      = max(Q3 + 1.5*IQR, floorValue)
+//	threshold      = max(Q3 + 1.5*IQR, baseThreshold)
 //	finalThreshold = threshold + offsetMultiplier*stdDev
 //
 // The same formula is applied at two levels: once against the total packet
@@ -30,11 +30,11 @@ import (
 // fields have sane defaults via DefaultConfig; override only what you're
 // deliberately tuning.
 type Config struct {
-	// FloorValue is the minimum threshold ever returned, regardless of how
+	// BaseThreshold is the minimum threshold ever returned, regardless of how
 	// quiet observed traffic has been. Prevents the threshold from
 	// collapsing toward zero during unusually quiet periods. The thesis
 	// used 200, chosen by trial and error for its dataset.
-	FloorValue float64
+	BaseThreshold float64
 
 	// IQRMultiplier scales the IQR before adding it to Q3. 1.5 is the
 	// conventional "mild outlier" multiplier (Tukey's fences); the thesis
@@ -66,7 +66,7 @@ type Config struct {
 // unspecified (MinSamples, MaxHistorySize).
 func DefaultConfig() Config {
 	return Config{
-		FloorValue:       200,
+		BaseThreshold:    200,
 		IQRMultiplier:    1.5,
 		OffsetMultiplier: 2,
 		MinSamples:       4,
@@ -127,7 +127,7 @@ func (d *Detector) EvaluateWindow(stats WindowStats) Verdict {
 
 	if d.windowHistory.size() < d.cfg.MinSamples {
 		d.windowHistory.add(total)
-		return Verdict{Threshold: d.cfg.FloorValue, IsMalicious: false}
+		return Verdict{Threshold: d.cfg.BaseThreshold, IsMalicious: false}
 	}
 
 	threshold := d.windowHistory.threshold(d.cfg)
@@ -169,7 +169,7 @@ func (d *Detector) EvaluateIP(ip flow.Key, count uint64, windowIsMalicious bool)
 		if !windowIsMalicious {
 			h.add(c)
 		}
-		return Verdict{Threshold: d.cfg.FloorValue, IsMalicious: false}
+		return Verdict{Threshold: d.cfg.BaseThreshold, IsMalicious: false}
 	}
 
 	threshold := h.threshold(d.cfg)

@@ -72,7 +72,7 @@ func TestHistory_AddEvictsOldest(t *testing.T) {
 
 func TestDefaultConfig_MatchesThesis(t *testing.T) {
 	cfg := DefaultConfig()
-	approxEqual(t, cfg.FloorValue, 200, 0)
+	approxEqual(t, cfg.BaseThreshold, 200, 0)
 	approxEqual(t, cfg.IQRMultiplier, 1.5, 0)
 	approxEqual(t, cfg.OffsetMultiplier, 2, 0)
 }
@@ -83,7 +83,7 @@ func TestDefaultConfig_MatchesThesis(t *testing.T) {
 // the underlying formula would be caught here.
 func TestDetector_EvaluateWindow_WarmUpThenThreshold(t *testing.T) {
 	cfg := Config{
-		FloorValue:       0, // disabled so it doesn't mask the IQR math being tested
+		BaseThreshold:    0, // disabled so it doesn't mask the IQR math being tested
 		IQRMultiplier:    1.5,
 		OffsetMultiplier: 2,
 		MinSamples:       4,
@@ -98,7 +98,7 @@ func TestDetector_EvaluateWindow_WarmUpThenThreshold(t *testing.T) {
 			t.Fatalf("window %d (total=%d) flagged malicious during normal ramp-up", i, total)
 		}
 		if i < cfg.MinSamples {
-			approxEqual(t, v.Threshold, cfg.FloorValue, 1e-9)
+			approxEqual(t, v.Threshold, cfg.BaseThreshold, 1e-9)
 		}
 	}
 
@@ -129,7 +129,7 @@ func TestDetector_EvaluateWindow_WarmUpThenThreshold(t *testing.T) {
 // windowIsMalicious=true, regardless of that call's own verdict.
 func TestDetector_EvaluateIP_FreezesDuringMaliciousWindow(t *testing.T) {
 	cfg := Config{
-		FloorValue:       0,
+		BaseThreshold:    0,
 		IQRMultiplier:    1.5,
 		OffsetMultiplier: 2,
 		MinSamples:       2,
@@ -182,7 +182,7 @@ func TestDetector_EvaluateIP_SeparateHistoryPerIP(t *testing.T) {
 	d.EvaluateIP(ip1, 1000000, false)
 
 	v := d.EvaluateIP(ip2, 50, false)
-	if v.Threshold != cfg.FloorValue {
-		t.Fatalf("expected a brand-new IP to start warm-up at the floor threshold, got %v", v.Threshold)
+	if v.Threshold != cfg.BaseThreshold {
+		t.Fatalf("expected a brand-new IP to start warm-up at the base threshold, got %v", v.Threshold)
 	}
 }

@@ -44,7 +44,7 @@ func (h *history) add(v float64) {
 // threshold computes the IQR-based threshold from the samples currently
 // held, per the formula in the package doc comment:
 //
-//	threshold      = max(Q3 + IQRMultiplier*IQR, FloorValue)
+//	threshold      = max(Q3 + IQRMultiplier*IQR, BaseThreshold)
 //	finalThreshold = threshold + OffsetMultiplier*stdDev
 //
 // threshold does not itself check whether enough samples exist to be
@@ -61,7 +61,7 @@ func (h *history) threshold(cfg Config) float64 {
 	q3 := percentile(sorted, 0.75)
 	iqrValue := q3 - q1
 
-	base := math.Max(q3+cfg.IQRMultiplier*iqrValue, cfg.FloorValue)
+	base := math.Max(q3+cfg.IQRMultiplier*iqrValue, cfg.BaseThreshold)
 	return base + cfg.OffsetMultiplier*stdDev(h.values)
 }
 
