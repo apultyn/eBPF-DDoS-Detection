@@ -107,7 +107,7 @@ func TestDetector_EvaluateWindow_WarmUpThenThreshold(t *testing.T) {
 	// Q1=117.5, Q3=152.5, IQR=35, base=max(152.5+52.5,0)=205,
 	// sample stddev=24.4949, threshold=205+2*24.4949=253.9898.
 	wantThreshold := 253.9898
-	gotThreshold := d.windowHistory.threshold(cfg)
+	gotThreshold := d.windowHistory.threshold(cfg).final
 	approxEqual(t, gotThreshold, wantThreshold, 0.01)
 
 	// A clear attack should now be flagged, and should not be folded into
@@ -184,5 +184,144 @@ func TestDetector_EvaluateIP_SeparateHistoryPerIP(t *testing.T) {
 	v := d.EvaluateIP(ip2, 50, false)
 	if v.Threshold != cfg.BaseThreshold {
 		t.Fatalf("expected a brand-new IP to start warm-up at the base threshold, got %v", v.Threshold)
+	}
+}
+
+func TestDetector_EvaluateIP_EvictsLeastRecentlyUsed(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.MinSamples = 2
+	cfg.MaxTrackedIPs = 3
+	d := NewDetector(cfg)
+
+	ip := func(i int) flow.Key {
+		return flow.FromIPv4([]byte{10, 0, 0, byte(i)})
+	}
+
+	// Give addresses 1-3 a full warm-up.
+	for round := 0; round < 2; round++ {
+		for i := 1; i <= 3; i++ {
+			d.EvaluateIP(ip(i), 50, false)
+		}
+	}
+
+	// Touch 1 so that 2 becomes the least recently used, then bring in 4.
+	d.EvaluateIP(ip(1), 50, false)
+	d.EvaluateIP(ip(4), 50, false)
+
+	if got := d.TrackedIPs(); got != 3 {
+		t.Fatalf("TrackedIPs = %d, want the cap of 3", got)
+	}
+	if got := d.EvictedIPs(); got != 1 {
+		t.Fatalf("EvictedIPs = %d, want 1", got)
+	}
+
+	// 1 and 3 kept their histories, so they are past warm-up.
+	for _, i := range []int{1, 3} {
+		if v := d.EvaluateIP(ip(i), 50, false); v.WarmUp {
+			t.Errorf("address %d lost its history but should have been kept", i)
+		}
+	}
+
+	// 2 was evicted and starts over.
+	if v := d.EvaluateIP(ip(2), 50, false); !v.WarmUp {
+		t.Error("evicted address kept its history")
+	}
+}
+
+func TestDetector_TrackedIPsStaysBounded(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.MaxTrackedIPs = 100
+	d := NewDetector(cfg)
+
+	// A rotating-source attack: every evaluation is a new address.
+	for i := 0; i < 10_000; i++ {
+		d.EvaluateIP(flow.FromIPv4([]byte{10, byte(i >> 16), byte(i >> 8), byte(i)}), 1000, true)
+	}
+
+	if got := d.TrackedIPs(); got != 100 {
+		t.Errorf("TrackedIPs = %d, want 100", got)
+	}
+	if got := d.EvictedIPs(); got != 10_000-100 {
+		t.Errorf("EvictedIPs = %d, want %d", got, 10_000-100)
+	}
+}
+
+func TestNewDetector_ZeroMaxTrackedIPsUsesDefault(t *testing.T) {
+	d := NewDetector(Config{MinSamples: 1, MaxHistorySize: 10})
+
+	for i := 0; i < DefaultMaxTrackedIPs+5; i++ {
+		d.EvaluateIP(flow.FromIPv4([]byte{10, 0, byte(i >> 8), byte(i)}), 1, false)
+	}
+
+	if got := d.TrackedIPs(); got != DefaultMaxTrackedIPs {
+		t.Errorf("TrackedIPs = %d, want %d", got, DefaultMaxTrackedIPs)
+	}
+}
+
+func TestDetector_WarmUpIsReported(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.MinSamples = 2
+	d := NewDetector(cfg)
+
+	for i, want := range []bool{true, true, false} {
+		if v := d.EvaluateWindow(WindowStats{TotalPackets: 100}); v.WarmUp != want {
+			t.Errorf("window %d: WarmUp = %v, want %v", i, v.WarmUp, want)
+		}
+	}
+
+	ip := flow.MustParse("10.0.0.1")
+	for i, want := range []bool{true, true, false} {
+		if v := d.EvaluateIP(ip, 100, false); v.WarmUp != want {
+			t.Errorf("ip evaluation %d: WarmUp = %v, want %v", i, v.WarmUp, want)
+		}
+	}
+}
+
+// TestDetector_ReportsWhichTermWasUsed checks that a verdict says whether
+// the floor or the quartile term set the threshold, at both levels.
+func TestDetector_ReportsWhichTermWasUsed(t *testing.T) {
+	cfg := Config{
+		BaseThreshold:    200,
+		IQRMultiplier:    1.5,
+		OffsetMultiplier: 2,
+		MinSamples:       4,
+		MaxHistorySize:   100,
+	}
+
+	// {100, 110, 120, 130}: Q1 = 107.5, Q3 = 122.5, quartile term 145,
+	// below the floor. {1000, 1100, 1200, 1300}: quartile term 1450.
+	tests := []struct {
+		name         string
+		samples      []uint64
+		wantFloor    bool
+		wantQuartile float64
+	}{
+		{"quiet traffic falls back on the floor", []uint64{100, 110, 120, 130}, true, 145},
+		{"busy traffic uses the quartiles", []uint64{1000, 1100, 1200, 1300}, false, 1450},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d := NewDetector(cfg)
+			ip := flow.MustParse("10.0.0.1")
+
+			for _, s := range tt.samples {
+				d.EvaluateWindow(WindowStats{TotalPackets: s})
+				d.EvaluateIP(ip, s, false)
+			}
+
+			for level, v := range map[string]Verdict{
+				"window": d.EvaluateWindow(WindowStats{TotalPackets: tt.samples[0]}),
+				"ip":     d.EvaluateIP(ip, tt.samples[0], false),
+			} {
+				if v.WarmUp {
+					t.Fatalf("%s: still in warm-up", level)
+				}
+				if v.FromFloor != tt.wantFloor {
+					t.Errorf("%s: FromFloor = %v, want %v", level, v.FromFloor, tt.wantFloor)
+				}
+				approxEqual(t, v.QuartileBound, tt.wantQuartile, 1e-9)
+			}
+		})
 	}
 }
