@@ -3,6 +3,8 @@ package iqr
 import (
 	"math"
 	"testing"
+
+	"github.com/apultyn/eBPF-DDoS-Detection/userspace/flow"
 )
 
 func approxEqual(t *testing.T, got, want, tolerance float64) {
@@ -70,7 +72,7 @@ func TestHistory_AddEvictsOldest(t *testing.T) {
 
 func TestDefaultConfig_MatchesThesis(t *testing.T) {
 	cfg := DefaultConfig()
-	approxEqual(t, cfg.FloorValue, 200, 0)
+	approxEqual(t, cfg.BaseThreshold, 200, 0)
 	approxEqual(t, cfg.IQRMultiplier, 1.5, 0)
 	approxEqual(t, cfg.OffsetMultiplier, 2, 0)
 }
@@ -81,7 +83,7 @@ func TestDefaultConfig_MatchesThesis(t *testing.T) {
 // the underlying formula would be caught here.
 func TestDetector_EvaluateWindow_WarmUpThenThreshold(t *testing.T) {
 	cfg := Config{
-		FloorValue:       0, // disabled so it doesn't mask the IQR math being tested
+		BaseThreshold:    0, // disabled so it doesn't mask the IQR math being tested
 		IQRMultiplier:    1.5,
 		OffsetMultiplier: 2,
 		MinSamples:       4,
@@ -96,7 +98,7 @@ func TestDetector_EvaluateWindow_WarmUpThenThreshold(t *testing.T) {
 			t.Fatalf("window %d (total=%d) flagged malicious during normal ramp-up", i, total)
 		}
 		if i < cfg.MinSamples {
-			approxEqual(t, v.Threshold, cfg.FloorValue, 1e-9)
+			approxEqual(t, v.Threshold, cfg.BaseThreshold, 1e-9)
 		}
 	}
 
@@ -127,14 +129,14 @@ func TestDetector_EvaluateWindow_WarmUpThenThreshold(t *testing.T) {
 // windowIsMalicious=true, regardless of that call's own verdict.
 func TestDetector_EvaluateIP_FreezesDuringMaliciousWindow(t *testing.T) {
 	cfg := Config{
-		FloorValue:       0,
+		BaseThreshold:    0,
 		IQRMultiplier:    1.5,
 		OffsetMultiplier: 2,
 		MinSamples:       2,
 		MaxHistorySize:   50,
 	}
 	d := NewDetector(cfg)
-	const ip = "10.0.0.5"
+	ip := flow.MustParse("10.0.0.5")
 
 	// Warm-up: two calls, neither compared against a real threshold yet.
 	// History becomes {50, 60}.
@@ -174,11 +176,13 @@ func TestDetector_EvaluateIP_SeparateHistoryPerIP(t *testing.T) {
 	d := NewDetector(cfg)
 
 	// Two different IPs should not influence each other's thresholds.
-	d.EvaluateIP("10.0.0.1", 1000000, false) // huge, but still warm-up so not malicious
-	d.EvaluateIP("10.0.0.1", 1000000, false)
+	ip1 := flow.MustParse("10.0.0.1")
+	ip2 := flow.MustParse("10.0.0.2")
+	d.EvaluateIP(ip1, 1000000, false) // huge, but still warm-up so not malicious
+	d.EvaluateIP(ip1, 1000000, false)
 
-	v := d.EvaluateIP("10.0.0.2", 50, false)
-	if v.Threshold != cfg.FloorValue {
-		t.Fatalf("expected a brand-new IP to start warm-up at the floor threshold, got %v", v.Threshold)
+	v := d.EvaluateIP(ip2, 50, false)
+	if v.Threshold != cfg.BaseThreshold {
+		t.Fatalf("expected a brand-new IP to start warm-up at the base threshold, got %v", v.Threshold)
 	}
 }

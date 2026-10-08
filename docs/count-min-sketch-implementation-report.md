@@ -2,7 +2,7 @@
 
 ## Overview
 
-The `userspace/countmin` package implements a Count-Min Sketch for estimating the frequency of string keys, such as source IP addresses observed in a network stream. It is intended for userspace DDoS detection and supports constant-size updates and queries relative to the number of distinct keys.
+The `userspace/countmin` package implements a Count-Min Sketch for estimating the frequency of `flow.Key` values representing source IP addresses observed in a network stream. It is intended for userspace DDoS detection and supports constant-size updates and queries relative to the number of distinct keys.
 
 A Count-Min Sketch never underestimates the true frequency of a key. Hash collisions can cause an estimate to be higher than the true frequency.
 
@@ -13,7 +13,7 @@ The implementation is centered on the `Sketch` type in `userspace/countmin/sketc
 - `width` counters per row.
 - `depth` independent rows.
 - A `uint64` counter matrix.
-- One `maphash.Seed` per row.
+- One integer seed per row.
 - A running `total` of all deltas passed to `Add`.
 
 ### Construction
@@ -31,7 +31,7 @@ Invalid values are rejected when `epsilon` or `delta` is less than or equal to z
 
 ### Updating counts
 
-`Add(key, delta)` hashes the key once per row using that row's independent `maphash` seed. The corresponding counter in every row is incremented by `delta`, and `total` is incremented by the same amount.
+`Add(key, delta)` computes the key's `flow.Key.Hash()` once, then derives one row index per row with `flow.Mix32` and that row's independent integer seed. The corresponding counter in every row is incremented by `delta`, and `total` is incremented by the same amount.
 
 Because every row receives the key's contribution, collisions can only increase counters associated with that key. This is the property that prevents undercounting.
 
@@ -119,7 +119,7 @@ The `test.` prefix is required when passing test flags directly to the compiled 
 - Estimates may be higher than the true count because of hash collisions.
 - Counters and the running total are `uint64` values; callers should avoid workloads that overflow them.
 - The sketch does not support removing one key or decaying individual entries. For sliding-window detection, use a separate sketch per window and discard the completed sketch.
-- `maphash` seeds are generated when a sketch is constructed, so separate sketches do not intentionally share row hash functions.
+- Row seeds are derived deterministically from the row number, making the hash layout reproducible and usable by a future BPF implementation.
 
 ## Summary
 

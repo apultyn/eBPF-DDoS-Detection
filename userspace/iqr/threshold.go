@@ -8,7 +8,7 @@
 //	Q1  = 25th percentile of recent normal-traffic samples
 //	Q3  = 75th percentile of recent normal-traffic samples
 //	IQR = Q3 - Q1
-//	threshold      = max(Q3 + 1.5*IQR, floorValue)
+//	threshold      = max(Q3 + 1.5*IQR, baseThreshold)
 //	finalThreshold = threshold + offsetMultiplier*stdDev
 //
 // The same formula is applied at two levels: once against the total packet
@@ -22,17 +22,19 @@ package iqr
 import (
 	"sync"
 	"time"
+
+	"github.com/apultyn/eBPF-DDoS-Detection/userspace/flow"
 )
 
 // Config holds the tunable parameters of the IQR threshold model. All
 // fields have sane defaults via DefaultConfig; override only what you're
 // deliberately tuning.
 type Config struct {
-	// FloorValue is the minimum threshold ever returned, regardless of how
+	// BaseThreshold is the minimum threshold ever returned, regardless of how
 	// quiet observed traffic has been. Prevents the threshold from
 	// collapsing toward zero during unusually quiet periods. The thesis
 	// used 200, chosen by trial and error for its dataset.
-	FloorValue float64
+	BaseThreshold float64
 
 	// IQRMultiplier scales the IQR before adding it to Q3. 1.5 is the
 	// conventional "mild outlier" multiplier (Tukey's fences); the thesis
@@ -64,7 +66,7 @@ type Config struct {
 // unspecified (MinSamples, MaxHistorySize).
 func DefaultConfig() Config {
 	return Config{
-		FloorValue:       200,
+		BaseThreshold:    200,
 		IQRMultiplier:    1.5,
 		OffsetMultiplier: 2,
 		MinSamples:       4,
@@ -99,7 +101,7 @@ type Detector struct {
 
 	mu            sync.Mutex
 	windowHistory *history
-	ipHistories   map[string]*history
+	ipHistories   map[flow.Key]*history
 }
 
 // NewDetector creates a Detector using the given configuration. Pass
@@ -108,14 +110,14 @@ func NewDetector(cfg Config) *Detector {
 	return &Detector{
 		cfg:           cfg,
 		windowHistory: newHistory(cfg.MaxHistorySize),
-		ipHistories:   make(map[string]*history),
+		ipHistories:   make(map[flow.Key]*history),
 	}
 }
 
 // EvaluateWindow compares stats.TotalPackets against the current
 // window-level threshold and returns the verdict. If the window is not
 // malicious, its total is folded into the history used for future thresholds;
-// if it is malicious, history is left untouched so the attack doesn't skew 
+// if it is malicious, history is left untouched so the attack doesn't skew
 // its own baseline.
 func (d *Detector) EvaluateWindow(stats WindowStats) Verdict {
 	d.mu.Lock()
@@ -125,7 +127,7 @@ func (d *Detector) EvaluateWindow(stats WindowStats) Verdict {
 
 	if d.windowHistory.size() < d.cfg.MinSamples {
 		d.windowHistory.add(total)
-		return Verdict{Threshold: d.cfg.FloorValue, IsMalicious: false}
+		return Verdict{Threshold: d.cfg.BaseThreshold, IsMalicious: false}
 	}
 
 	threshold := d.windowHistory.threshold(d.cfg)
@@ -151,7 +153,7 @@ func (d *Detector) EvaluateWindow(stats WindowStats) Verdict {
 // still gets folded into its own baseline (since windowIsMalicious is
 // false in that case), which could raise its future threshold. The thesis
 // doesn't address this edge case.
-func (d *Detector) EvaluateIP(ip string, count uint64, windowIsMalicious bool) Verdict {
+func (d *Detector) EvaluateIP(ip flow.Key, count uint64, windowIsMalicious bool) Verdict {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -167,7 +169,7 @@ func (d *Detector) EvaluateIP(ip string, count uint64, windowIsMalicious bool) V
 		if !windowIsMalicious {
 			h.add(c)
 		}
-		return Verdict{Threshold: d.cfg.FloorValue, IsMalicious: false}
+		return Verdict{Threshold: d.cfg.BaseThreshold, IsMalicious: false}
 	}
 
 	threshold := h.threshold(d.cfg)

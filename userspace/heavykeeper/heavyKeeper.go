@@ -1,9 +1,20 @@
-package main
+// Package heavykeeper implements the HeavyKeeper sketch and the Top-K
+// candidate set used to find the source addresses sending the most
+// packets within a time window.
+//
+// Concurrency model: a HeavyKeeper and its TopK belong to one time window
+// and are driven by a single goroutine, so neither is synchronized. Both
+// can be Reset and reused for a later window.
+//
+// Reference: Gong et al., "HeavyKeeper: An Accurate Algorithm for
+// Finding Top-k Elephant Flows", USENIX ATC 2018.
+package heavykeeper
 
 import (
-	"fmt"
 	"math"
 	"math/bits"
+
+	"github.com/apultyn/eBPF-DDoS-Detection/userspace/flow"
 )
 
 // decayLUTSize bounds the precomputed decay table.
@@ -22,7 +33,7 @@ const fpSalt = 0xa5a5a5a5
 //
 // Counters must never wrap: a wrapped elephant would read as an empty
 // bucket and be evicted on the next packet.
-const maxCounter = ^uint16(0)
+const maxCounter = ^uint32(0)
 
 // ============================================================
 // HeavyKeeper sketch
@@ -30,12 +41,18 @@ const maxCounter = ^uint16(0)
 
 // Bucket is one cell in the HeavyKeeper matrix.
 //
-// Laid out as 2 + 2 bytes so the struct is exactly 4 bytes with no
-// padding, matching the paper and the future BPF map layout. Sixteen
-// buckets therefore share one 64-byte cache line.
+// Laid out as 4 + 4 bytes so the struct is exactly 8 bytes with no
+// padding, matching the future BPF map layout. Eight buckets share one
+// 64-byte cache line.
+//
+// Both fields are 32 bits. A 16-bit counter saturates at 65 535, which a
+// single source exceeds within a second at the packet rates in the CAIDA
+// traces. The fingerprint is widened with it since the space would
+// otherwise be padding, and a wider fingerprint makes collisions rarer
+// now that IPv6 enlarges the key space.
 type Bucket struct {
-	Fingerprint uint16
-	Count       uint16
+	Fingerprint uint32
+	Count       uint32
 }
 
 // HeavyKeeper is the Hardware Parallel version of the sketch: on a
@@ -57,13 +74,13 @@ type HeavyKeeper struct {
 	rng splitMix64
 }
 
-// NewHeavyKeeper creates a new HeavyKeeper sketch.
+// New creates a new HeavyKeeper sketch.
 //
 // width must be a power of two so the bucket index can be masked
 // instead of taken modulo.
 //
 // rngSeed is explicitly supplied so experiments can be reproduced.
-func NewHeavyKeeper(
+func New(
 	depth int,
 	width int,
 	decayBase float64,
@@ -98,7 +115,7 @@ func NewHeavyKeeper(
 	for row := 0; row < depth; row++ {
 		hk.table[row] = make([]Bucket, width)
 
-		hk.seeds[row] = mix32(uint32(row) + 0x9e3779b9)
+		hk.seeds[row] = flow.Mix32(uint32(row) + 0x9e3779b9)
 
 		// A row seed equal to the fingerprint salt would make the
 		// fingerprint carry no information independent of the index.
@@ -121,7 +138,9 @@ func NewHeavyKeeper(
 // Reset clears the sketch so it can be reused for a new time window.
 //
 // Windows are created and retired continuously, so reusing sketches
-// from a pool avoids reallocating the table on every window.
+// from a pool avoids reallocating the table on every window. The random
+// stream is deliberately not rewound: it only drives the decay coin
+// flips, and a run stays reproducible as long as the initial seed is.
 func (hk *HeavyKeeper) Reset() {
 	for row := range hk.table {
 		clear(hk.table[row])
@@ -154,53 +173,41 @@ func (r *splitMix64) next() uint32 {
 // Hashing
 // ============================================================
 
-// mix32 is an integer mixing function with good avalanche.
+// index maps a flow to one bucket in a specific row.
 //
-// IP addresses cluster heavily in their low bits, so the input must be
-// mixed before it is reduced to a bucket index. This particular
-// constant set is a bijection on uint32, meaning all bucket collisions
-// come from the index reduction rather than from the mixing itself.
-func mix32(x uint32) uint32 {
-	x ^= x >> 16
-	x *= 0x7feb352d
-	x ^= x >> 15
-	x *= 0x846ca68b
-	x ^= x >> 16
-
-	return x
+// h is the flow's 32-bit key hash, computed once per packet, so a
+// 16-byte IPv6 key is not re-read for every row.
+func (hk *HeavyKeeper) index(h uint32, row int) uint32 {
+	return flow.Mix32(h^hk.seeds[row]) & hk.mask
 }
 
-// hash maps a flow to one bucket in a specific row.
-func (hk *HeavyKeeper) hash(item uint32, row int) uint32 {
-	return mix32(item^hk.seeds[row]) & hk.mask
-}
-
-// fingerprint produces a 16-bit fingerprint.
+// fingerprint produces the flow's 32-bit fingerprint.
 //
 // Computed once per flow and identical in every row, since it is the
-// flow's identity rather than its location. The upper half of the
-// mixed word is used to keep the separation from the index explicit.
-func (hk *HeavyKeeper) fingerprint(item uint32) uint16 {
-	return uint16(mix32(item^fpSalt) >> 16)
+// flow's identity rather than its location. Mix32 is a bijection, so two
+// flows share a fingerprint exactly when their key hashes collide.
+func fingerprint(h uint32) uint32 {
+	return flow.Mix32(h ^ fpSalt)
 }
 
 // ============================================================
 // HeavyKeeper operations
 // ============================================================
 
-// Insert processes one occurrence of item.
+// Insert processes one occurrence of key.
 //
 // It returns the estimated frequency after the update, or zero if the
-// item is held in no bucket, which marks it as a mouse flow.
-func (hk *HeavyKeeper) Insert(item uint32) uint32 {
+// flow is held in no bucket, which marks it as a mouse flow.
+func (hk *HeavyKeeper) Insert(key flow.Key) uint32 {
 
-	fp := hk.fingerprint(item)
+	h := key.Hash()
+	fp := fingerprint(h)
 
-	var best uint16
+	var best uint32
 
 	for row := 0; row < hk.depth; row++ {
 
-		bucket := &hk.table[row][hk.hash(item, row)]
+		bucket := &hk.table[row][hk.index(h, row)]
 
 		switch {
 
@@ -241,12 +248,12 @@ func (hk *HeavyKeeper) Insert(item uint32) uint32 {
 		}
 	}
 
-	return uint32(best)
+	return best
 }
 
 // decayThreshold returns the scaled probability of decaying a bucket
 // whose counter currently holds count.
-func (hk *HeavyKeeper) decayThreshold(count uint16) uint32 {
+func (hk *HeavyKeeper) decayThreshold(count uint32) uint32 {
 	if count < decayLUTSize {
 		return hk.decayLUT[count]
 	}
@@ -254,27 +261,28 @@ func (hk *HeavyKeeper) decayThreshold(count uint16) uint32 {
 	return 0
 }
 
-// Query returns the estimated frequency for an item.
+// Query returns the estimated frequency for a flow.
 //
 // The maximum counter among matching rows is used: decay can only push
 // a counter below the true size, never above it, so the row where the
 // flow was least disturbed carries the best estimate.
-func (hk *HeavyKeeper) Query(item uint32) uint32 {
+func (hk *HeavyKeeper) Query(key flow.Key) uint32 {
 
-	fp := hk.fingerprint(item)
+	h := key.Hash()
+	fp := fingerprint(h)
 
-	var best uint16
+	var best uint32
 
 	for row := 0; row < hk.depth; row++ {
 
-		bucket := hk.table[row][hk.hash(item, row)]
+		bucket := hk.table[row][hk.index(h, row)]
 
 		if bucket.Fingerprint == fp && bucket.Count > best {
 			best = bucket.Count
 		}
 	}
 
-	return uint32(best)
+	return best
 }
 
 // ============================================================
@@ -284,23 +292,23 @@ func (hk *HeavyKeeper) Query(item uint32) uint32 {
 // TopKEntry stores the real flow identifier.
 //
 // This is necessary because HeavyKeeper itself only stores
-// fingerprints, from which the original IP cannot be recovered.
+// fingerprints, from which the original address cannot be recovered.
 type TopKEntry struct {
-	Item  uint32
+	Item  flow.Key
 	Count uint32
 }
 
 // TopK maintains the candidate heavy hitters alongside the sketch.
 //
 // K is small, so a flat slice with a linear minimum scan beats a heap:
-// ten entries fit in a couple of cache lines and there is no interface
+// ten entries fit in a few cache lines and there is no interface
 // boxing. This part stays in user space even after the sketch itself
 // moves into the kernel.
 type TopK struct {
 	k int
 
 	entries []TopKEntry
-	index   map[uint32]int
+	index   map[flow.Key]int
 
 	minPos   int
 	minCount uint32
@@ -314,7 +322,7 @@ func NewTopK(k int) *TopK {
 	return &TopK{
 		k:       k,
 		entries: make([]TopKEntry, 0, k),
-		index:   make(map[uint32]int, k),
+		index:   make(map[flow.Key]int, k),
 	}
 }
 
@@ -332,7 +340,7 @@ func (t *TopK) Reset() {
 //
 // Callers must not pass a zero count: an item held in no bucket is a
 // mouse flow and does not belong in the candidate set.
-func (t *TopK) Update(item uint32, count uint32) {
+func (t *TopK) Update(item flow.Key, count uint32) {
 
 	// Already a candidate.
 	if pos, ok := t.index[item]; ok {
@@ -411,104 +419,4 @@ func (t *TopK) Get() []TopKEntry {
 	}
 
 	return result
-}
-
-// ============================================================
-// IPv4 helpers
-// ============================================================
-
-// ipv4FromBytes converts four header bytes to a flow key.
-//
-// This is the conversion used in the packet path. The string variants
-// below allocate and are meant for tests and fixtures only.
-func ipv4FromBytes(b []byte) uint32 {
-	return uint32(b[0])<<24 |
-		uint32(b[1])<<16 |
-		uint32(b[2])<<8 |
-		uint32(b[3])
-}
-
-func ipv4ToUint32(ip string) uint32 {
-	var a, b, c, d uint32
-
-	n, err := fmt.Sscanf(ip, "%d.%d.%d.%d", &a, &b, &c, &d)
-	if err != nil || n != 4 || a > 255 || b > 255 || c > 255 || d > 255 {
-		panic("invalid IPv4 address: " + ip)
-	}
-
-	return a<<24 | b<<16 | c<<8 | d
-}
-
-func uint32ToIPv4(ip uint32) string {
-	return fmt.Sprintf(
-		"%d.%d.%d.%d",
-		byte(ip>>24),
-		byte(ip>>16),
-		byte(ip>>8),
-		byte(ip),
-	)
-}
-
-// ============================================================
-// Example
-// ============================================================
-
-func main() {
-
-	const (
-		depth     = 4
-		width     = 1024
-		decayBase = 1.08
-		k         = 10
-
-		// Fixed seed for reproducible experiments.
-		rngSeed = 42
-	)
-
-	hk := NewHeavyKeeper(depth, width, decayBase, rngSeed)
-	topK := NewTopK(k)
-
-	observe := func(ip uint32) {
-		// A zero estimate means the flow is held in no bucket, which
-		// marks it as a mouse flow. It must not reach the candidate
-		// set, where it would otherwise occupy a slot with count zero.
-		if estimate := hk.Insert(ip); estimate > 0 {
-			topK.Update(ip, estimate)
-		}
-	}
-
-	// --------------------------------------------------------
-	// Simulated DDoS source
-	// --------------------------------------------------------
-
-	elephant := ipv4ToUint32("192.168.1.100")
-
-	for i := 0; i < 5000; i++ {
-		observe(elephant)
-	}
-
-	// --------------------------------------------------------
-	// Background traffic
-	// --------------------------------------------------------
-
-	for i := 0; i < 2000; i++ {
-		observe(ipv4ToUint32(fmt.Sprintf("10.0.0.%d", (i%250)+1)))
-	}
-
-	// --------------------------------------------------------
-	// Results
-	// --------------------------------------------------------
-
-	fmt.Printf("Elephant estimate: %d (true: 5000)\n\n", hk.Query(elephant))
-
-	fmt.Println("HeavyKeeper Top-K candidates:")
-
-	for rank, entry := range topK.Get() {
-		fmt.Printf(
-			"%2d. %-15s HK estimate: %d\n",
-			rank+1,
-			uint32ToIPv4(entry.Item),
-			entry.Count,
-		)
-	}
 }
