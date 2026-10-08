@@ -129,30 +129,30 @@ type Closed struct {
 
 // Dropped describes the incomplete window discarded by Finish.
 type Dropped struct {
-	Epoch   epoch.Epoch
-	Start   time.Time
-	End     time.Time
-	Packets uint64
-	Bytes   uint64
+	Epoch   epoch.Epoch `json:"epoch"`
+	Start   time.Time   `json:"start"`
+	End     time.Time   `json:"end"`
+	Packets uint64      `json:"packets"`
+	Bytes   uint64      `json:"bytes"`
 }
 
 // Stats counts what the aggregator has done so far.
 type Stats struct {
 	// Closed is the number of windows handed to the callback, Empty how
 	// many of those had no packets.
-	Closed uint64
-	Empty  uint64
+	Closed uint64 `json:"closed"`
+	Empty  uint64 `json:"empty"`
 
 	// Jumps is the number of times a long pause was skipped, and
 	// SkippedEpochs the total number of epochs skipped by them.
-	Jumps         uint64
-	SkippedEpochs uint64
+	Jumps         uint64 `json:"jumps"`
+	SkippedEpochs uint64 `json:"skipped_epochs"`
 
 	// Late is the number of packets dropped because their timestamp fell
 	// in an epoch that had already closed. Both trace files and a single
 	// live interface deliver packets in timestamp order, so a non-zero
 	// value means that assumption does not hold for the input.
-	Late uint64
+	Late uint64 `json:"late_packets"`
 }
 
 // Aggregator assigns packets to windows and closes windows as time passes.
