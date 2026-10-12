@@ -1,25 +1,34 @@
-// Command detector replays trace files through the user-space detection
-// pipeline and writes the results to an output directory:
+// Command detector runs the user-space detection pipeline on trace files
+// or on a live interface and writes the results to an output directory:
 //
 //	windows.csv  one row per closed window
 //	ips.csv      one row per evaluated candidate source
-//	run.json     configuration, input files in reading order, and summary
+//	run.json     configuration, inputs, how the run ended, and a summary
 //
-// Inputs are files or directories. A directory stands for the trace files
-// directly inside it, read in natural order. All inputs are read as one
-// continuous stream, so the threshold history built on one input carries
-// into the next; to keep recordings apart, such as the two days of
-// CIC-DDoS2019, run once per directory with separate output directories:
+// Trace replay: inputs are files or directories. A directory stands for
+// the trace files directly inside it, read in natural order. All inputs
+// are read as one continuous stream, so the threshold history built on
+// one input carries into the next; to keep recordings apart, such as the
+// two days of CIC-DDoS2019, run once per directory:
 //
 //	detector -pcap PCAP-01-12 -out results/day1
 //	detector -pcap PCAP-03-11 -out results/day2
+//
+// Live capture (Linux, as root):
+//
+//	detector -iface ens7 -duration 10m -out results/live1
+//
+// Live capture also records how many packets the socket and the interface
+// dropped, since that is where the user-space path runs out of capacity.
+// Turn off receive offloads first so the kernel does not merge packets:
+//
+//	ethtool -K ens7 gro off lro off
 package main
 
 import (
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -56,28 +65,39 @@ func main() {
 	}
 }
 
+// options are the settings that are not part of the window or detector
+// configuration.
+type options struct {
+	inputs   listFlag
+	iface    string
+	duration time.Duration
+	rcvbuf   int
+	outDir   string
+	force    bool
+	quiet    bool
+}
+
 func run() error {
 	wcfg := window.DefaultConfig()
-	wcfg.MaxEmpty = window.PcapMaxEmpty
-
 	dcfg := detector.DefaultConfig()
 
 	var (
-		inputs listFlag
-		outDir string
-		force  bool
-		quiet  bool
+		opt    options
 		counts string
 		mode   string
 	)
 
-	flag.Var(&inputs, "pcap", "trace file or directory of trace files; may be repeated")
-	flag.StringVar(&outDir, "out", "", "output directory for windows.csv, ips.csv and run.json")
-	flag.BoolVar(&force, "force", false, "overwrite existing output files")
-	flag.BoolVar(&quiet, "quiet", false, "do not print progress")
+	flag.Var(&opt.inputs, "pcap", "trace file or directory of trace files; may be repeated")
+	flag.StringVar(&opt.iface, "iface", "", "capture live on this interface instead (Linux, needs root)")
+	flag.DurationVar(&opt.duration, "duration", 0, "stop a live capture after this long; 0 runs until Ctrl-C")
+	flag.IntVar(&opt.rcvbuf, "rcvbuf", 0, "live socket receive buffer in bytes; 0 keeps the system default")
+	flag.StringVar(&opt.outDir, "out", "", "output directory for windows.csv, ips.csv and run.json")
+	flag.BoolVar(&opt.force, "force", false, "overwrite existing output files")
+	flag.BoolVar(&opt.quiet, "quiet", false, "do not print progress")
 
 	flag.DurationVar(&wcfg.Length, "window", wcfg.Length, "window length")
-	flag.IntVar(&wcfg.MaxEmpty, "max-empty", wcfg.MaxEmpty, "empty windows closed before jumping over a pause; 0 never jumps")
+	flag.IntVar(&wcfg.MaxEmpty, "max-empty", window.PcapMaxEmpty,
+		"empty windows closed before jumping over a pause; 0 never jumps (default 10 for -pcap, 0 for -iface)")
 
 	flag.StringVar(&counts, "counts", wcfg.Counts.String(), "per-IP count source: heavykeeper or countmin")
 	flag.StringVar(&mode, "mode", dcfg.Mode.String(), "evaluation mode: combined or current")
@@ -99,9 +119,23 @@ func run() error {
 
 	flag.Parse()
 
-	if len(inputs) == 0 || outDir == "" {
+	live := opt.iface != ""
+
+	switch {
+	case live == (len(opt.inputs) > 0):
 		flag.Usage()
-		return errors.New("-pcap and -out are required")
+		return errors.New("give exactly one of -pcap or -iface")
+	case opt.outDir == "":
+		flag.Usage()
+		return errors.New("-out is required")
+	case !live && (opt.duration != 0 || opt.rcvbuf != 0):
+		return errors.New("-duration and -rcvbuf only apply to -iface")
+	}
+
+	// A quiet period on a live interface is real traffic information, so
+	// live capture never jumps unless asked to explicitly.
+	if live && !flagSet("max-empty") {
+		wcfg.MaxEmpty = window.LiveMaxEmpty
 	}
 
 	var err error
@@ -114,7 +148,181 @@ func run() error {
 		return err
 	}
 
-	paths, err := capture.ExpandPaths(inputs)
+	if err := prepareOutput(opt.outDir, opt.force); err != nil {
+		return err
+	}
+
+	if live {
+		return runLive(opt, wcfg, dcfg)
+	}
+
+	return runTrace(opt, wcfg, dcfg)
+}
+
+// session is a run in progress: the pipeline and its accumulated stats.
+type session struct {
+	opt  options
+	wcfg window.Config
+	dcfg detector.Config
+
+	ev   *detector.Evaluator
+	agg  *window.Aggregator
+	sink *report.CSVSink
+
+	stats      report.Stats
+	sinkErr    error
+	lateLogged int
+
+	// drops, when set, returns the live socket's cumulative drop count.
+	drops     func() (uint64, bool)
+	lastDrops uint64
+
+	stop    atomic.Bool
+	started time.Time
+	next    time.Time
+
+	progress func() string
+}
+
+func newSession(opt options, wcfg window.Config, dcfg detector.Config) (*session, error) {
+	s := &session{opt: opt, wcfg: wcfg, dcfg: dcfg, started: time.Now()}
+	s.next = s.started.Add(progressInterval)
+
+	var err error
+
+	if s.ev, err = detector.NewEvaluator(dcfg); err != nil {
+		return nil, err
+	}
+
+	if s.agg, err = window.NewAggregator(wcfg, s.onClose); err != nil {
+		return nil, err
+	}
+
+	if s.sink, err = report.NewCSVSink(opt.outDir, opt.force); err != nil {
+		return nil, err
+	}
+
+	return s, nil
+}
+
+// onClose evaluates a closed window and writes the result.
+func (s *session) onClose(c window.Closed) {
+	r := s.ev.Evaluate(c)
+
+	if s.drops != nil {
+		if total, ok := s.drops(); ok {
+			r.KernelDrops = int64(total - s.lastDrops)
+			s.lastDrops = total
+		}
+	}
+
+	if r.Evaluated {
+		s.stats.EvaluatedWindows++
+	}
+	if r.Verdict.IsMalicious {
+		s.stats.FlaggedWindows++
+	}
+	for _, ip := range r.IPs {
+		if ip.Verdict.IsMalicious {
+			s.stats.FlaggedIPRows++
+		}
+	}
+
+	if r.Late > 0 {
+		s.lateLogged++
+		switch {
+		case s.lateLogged <= lateLogLimit:
+			log.Printf("warning: %d out-of-order packets dropped in window %d; inputs are assumed to be in time order",
+				r.Late, r.Epoch)
+		case s.lateLogged == lateLogLimit+1:
+			log.Printf("warning: further windows with out-of-order packets are not logged; see run.json")
+		}
+	}
+
+	if s.sinkErr == nil {
+		s.sinkErr = s.sink.Write(&r)
+	}
+}
+
+func (s *session) loop() *loop {
+	return &loop{
+		agg:    s.agg,
+		stop:   &s.stop,
+		failed: func() error { return s.sinkErr },
+		tick:   s.tick,
+	}
+}
+
+func (s *session) tick() {
+	if s.opt.quiet {
+		return
+	}
+
+	if now := time.Now(); now.After(s.next) {
+		log.Printf("%v: %s, %d windows (%d flagged)",
+			now.Sub(s.started).Round(time.Second), s.progress(), s.agg.Stats().Closed, s.stats.FlaggedWindows)
+		s.next = now.Add(progressInterval)
+	}
+}
+
+// interruptOn makes Ctrl-C end the run cleanly: the windows closed so far
+// are kept and run.json is still written. wake, if set, is called to
+// unblock a read that is waiting for packets.
+func (s *session) interruptOn(wake func()) {
+	interrupt := make(chan os.Signal, 1)
+	signal.Notify(interrupt, os.Interrupt)
+
+	go func() {
+		<-interrupt
+		s.stop.Store(true)
+		signal.Stop(interrupt)
+
+		if wake != nil {
+			wake()
+		}
+	}()
+}
+
+// finish drops the incomplete last window, closes the CSV files and fills
+// in the stats common to both modes.
+func (s *session) finish(src capture.Source, finished time.Time) error {
+	if d, ok := s.agg.Finish(); ok {
+		s.stats.Dropped = &d
+		log.Printf("dropped the incomplete last window %d (%d packets); it is not in windows.csv", d.Epoch, d.Packets)
+	}
+
+	err := s.sink.Close()
+
+	st := src.Stats()
+	s.stats.Packets = st.Packets
+	s.stats.Skipped = st.Skipped
+	s.stats.Window = s.agg.Stats()
+	s.stats.TrackedIPs = uint64(s.ev.Detector().TrackedIPs())
+	s.stats.EvictedIPs = s.ev.Detector().EvictedIPs()
+	s.stats.WallSeconds = finished.Sub(s.started).Seconds()
+	if s.stats.WallSeconds > 0 {
+		s.stats.PacketsPerSecond = float64(s.stats.Packets) / s.stats.WallSeconds
+	}
+
+	return errors.Join(err, s.sinkErr)
+}
+
+func (s *session) runInfo(source, endReason string, finished time.Time) *report.Run {
+	return &report.Run{
+		Tool:       "detector",
+		Version:    report.CurrentVersion(),
+		Args:       os.Args[1:],
+		StartedAt:  s.started,
+		FinishedAt: finished,
+		EndReason:  endReason,
+		Source:     source,
+		Config:     runConfig(s.wcfg, s.dcfg),
+		Stats:      s.stats,
+	}
+}
+
+func runTrace(opt options, wcfg window.Config, dcfg detector.Config) error {
+	paths, err := capture.ExpandPaths(opt.inputs)
 	if err != nil {
 		return err
 	}
@@ -123,160 +331,143 @@ func run() error {
 		return errors.New("no trace files found in the inputs")
 	}
 
-	if len(inputs) > 1 {
-		log.Printf("note: %d inputs are read as one stream; history carries from one into the next", len(inputs))
+	if len(opt.inputs) > 1 {
+		log.Printf("note: %d inputs are read as one stream; history carries from one into the next", len(opt.inputs))
 	}
 
-	if err := prepareOutput(outDir, force); err != nil {
-		return err
-	}
-
-	started := time.Now()
-
+	// The source is opened before the output files are created, so a bad
+	// input leaves no half-written results behind.
 	src, err := capture.OpenFiles(paths)
 	if err != nil {
 		return err
 	}
 	defer src.Close()
 
-	ev, err := detector.NewEvaluator(dcfg)
+	s, err := newSession(opt, wcfg, dcfg)
 	if err != nil {
 		return err
 	}
 
-	sink, err := report.NewCSVSink(outDir, force)
-	if err != nil {
-		return err
+	s.progress = func() string {
+		return fmt.Sprintf("%d packets, file %d: %s",
+			src.Stats().Packets, len(src.Files()), filepath.Base(src.CurrentFile()))
 	}
 
-	var (
-		stats      report.Stats
-		sinkErr    error
-		lateLogged int
-	)
+	s.interruptOn(nil)
 
-	agg, err := window.NewAggregator(wcfg, func(c window.Closed) {
-		r := ev.Evaluate(c)
+	log.Printf("reading %d files into %s", len(paths), opt.outDir)
 
-		if r.Evaluated {
-			stats.EvaluatedWindows++
-		}
-		if r.Verdict.IsMalicious {
-			stats.FlaggedWindows++
-		}
-		for _, ip := range r.IPs {
-			if ip.Verdict.IsMalicious {
-				stats.FlaggedIPRows++
-			}
-		}
-
-		if r.Late > 0 {
-			lateLogged++
-			switch {
-			case lateLogged <= lateLogLimit:
-				log.Printf("warning: %d out-of-order packets dropped in window %d; inputs are assumed to be in time order",
-					r.Late, r.Epoch)
-			case lateLogged == lateLogLimit+1:
-				log.Printf("warning: further windows with out-of-order packets are not logged; see run.json")
-			}
-		}
-
-		if sinkErr == nil {
-			sinkErr = sink.Write(&r)
-		}
-	})
-	if err != nil {
-		return err
-	}
-
-	// Ctrl-C ends the run cleanly: the windows closed so far are kept and
-	// run.json is still written.
-	var stop atomic.Bool
-
-	interrupt := make(chan os.Signal, 1)
-	signal.Notify(interrupt, os.Interrupt)
-
-	go func() {
-		<-interrupt
-		stop.Store(true)
-		signal.Stop(interrupt)
-	}()
-
-	log.Printf("reading %d files into %s", len(paths), outDir)
-
-	nextProgress := started.Add(progressInterval)
-
-	var readErr error
-
-	for n := uint64(0); ; n++ {
-		// Checking the clock and the stop flag every packet would cost
-		// more than the rest of the loop.
-		if n&0xffff == 0 {
-			if stop.Load() {
-				break
-			}
-
-			if now := time.Now(); !quiet && now.After(nextProgress) {
-				printProgress(now.Sub(started), src, agg, &stats)
-				nextProgress = now.Add(progressInterval)
-			}
-		}
-
-		p, err := src.Next()
-		if err != nil {
-			if err != io.EOF {
-				readErr = err
-			}
-			break
-		}
-
-		agg.Observe(p)
-
-		if sinkErr != nil {
-			break
-		}
-	}
-
+	endReason, loopErr := s.loop().trace(src)
 	finished := time.Now()
 
-	if d, ok := agg.Finish(); ok {
-		stats.Dropped = &d
-		log.Printf("dropped the incomplete last window %d (%d packets); it is not in windows.csv", d.Epoch, d.Packets)
-	}
+	finishErr := s.finish(src, finished)
 
-	closeErr := sink.Close()
+	info := s.runInfo("pcap", endReason, finished)
+	info.Inputs = src.Files()
+	info.Notes = []string{report.TraceTimingNote}
 
-	srcStats := src.Stats()
-	stats.Packets = srcStats.Packets
-	stats.Skipped = srcStats.Skipped
-	stats.Window = agg.Stats()
-	stats.TrackedIPs = uint64(ev.Detector().TrackedIPs())
-	stats.EvictedIPs = ev.Detector().EvictedIPs()
-	stats.WallSeconds = finished.Sub(started).Seconds()
-	if stats.WallSeconds > 0 {
-		stats.PacketsPerSecond = float64(stats.Packets) / stats.WallSeconds
-	}
-
-	runInfo := &report.Run{
-		Tool:        "detector",
-		Version:     report.CurrentVersion(),
-		Args:        os.Args[1:],
-		StartedAt:   started,
-		FinishedAt:  finished,
-		Interrupted: stop.Load(),
-		Config:      runConfig(wcfg, dcfg),
-		Inputs:      src.Files(),
-		Stats:       stats,
-		Notes:       []string{report.TimingNote},
-	}
-
-	if err := report.WriteRun(outDir, runInfo, force); err != nil {
+	if err := report.WriteRun(opt.outDir, info, opt.force); err != nil {
 		return err
 	}
 
-	printSummary(runInfo)
+	printSummary(info)
 
-	return errors.Join(readErr, sinkErr, closeErr)
+	return errors.Join(loopErr, finishErr)
+}
+
+func runLive(opt options, wcfg window.Config, dcfg detector.Config) error {
+	src, err := capture.OpenLive(capture.LiveConfig{Interface: opt.iface, RecvBuffer: opt.rcvbuf})
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+
+	s, err := newSession(opt, wcfg, dcfg)
+	if err != nil {
+		return err
+	}
+
+	info := &report.Live{
+		Interface:           opt.iface,
+		RequestedRecvBuffer: opt.rcvbuf,
+	}
+	if opt.duration > 0 {
+		info.Duration = opt.duration.String()
+	}
+
+	// Snapshot the interface counters after the socket is open, so that
+	// both cover the same span as the socket's own counters.
+	nicStart, warn, err := capture.ReadNICCounters(opt.iface)
+	if err != nil {
+		info.NICWarnings = append(info.NICWarnings, "start: "+err.Error())
+	} else if warn != nil {
+		info.NICWarnings = append(info.NICWarnings, "start: "+warn.Error())
+	}
+
+	s.drops = func() (uint64, bool) {
+		st, err := src.LiveStats()
+		return st.KernelDropped, err == nil
+	}
+
+	// LiveStats is cumulative, so reading it for progress does not
+	// disturb the per-window drop counts.
+	s.progress = func() string {
+		st, _ := src.LiveStats()
+		return fmt.Sprintf("%d packets, %d dropped by the socket", src.Stats().Packets, st.KernelDropped)
+	}
+
+	s.interruptOn(func() { src.SetDeadline(time.Now()) })
+
+	var end time.Time
+	if opt.duration > 0 {
+		end = s.started.Add(opt.duration)
+	}
+
+	log.Printf("capturing on %s into %s", opt.iface, opt.outDir)
+
+	endReason, loopErr := s.loop().live(src, end, time.Now)
+	finished := time.Now()
+
+	if st, err := src.LiveStats(); err == nil {
+		info.Socket = st
+	} else {
+		loopErr = errors.Join(loopErr, err)
+	}
+
+	if nicStart != nil {
+		nicEnd, warn, err := capture.ReadNICCounters(opt.iface)
+
+		switch {
+		case err != nil:
+			info.NICWarnings = append(info.NICWarnings, "end: "+err.Error())
+		default:
+			if warn != nil {
+				info.NICWarnings = append(info.NICWarnings, "end: "+warn.Error())
+			}
+
+			info.NICStart, info.NICEnd = nicStart, nicEnd
+
+			delta, err := nicStart.Delta(nicEnd)
+			if err != nil {
+				info.NICWarnings = append(info.NICWarnings, "delta: "+err.Error())
+			}
+			info.NICDelta = delta
+		}
+	}
+
+	finishErr := s.finish(src, finished)
+
+	run := s.runInfo("live", endReason, finished)
+	run.Live = info
+	run.Notes = []string{report.LiveTimingNote}
+
+	if err := report.WriteRun(opt.outDir, run, opt.force); err != nil {
+		return err
+	}
+
+	printSummary(run)
+
+	return errors.Join(loopErr, finishErr)
 }
 
 // prepareOutput creates the output directory and refuses to start if a
@@ -300,6 +491,19 @@ func prepareOutput(dir string, force bool) error {
 	}
 
 	return nil
+}
+
+// flagSet reports whether a flag was given on the command line.
+func flagSet(name string) bool {
+	set := false
+
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			set = true
+		}
+	})
+
+	return set
 }
 
 func runConfig(w window.Config, d detector.Config) report.Config {
@@ -327,41 +531,43 @@ func runConfig(w window.Config, d detector.Config) report.Config {
 	}
 }
 
-func printProgress(elapsed time.Duration, src *capture.MultiSource, agg *window.Aggregator, stats *report.Stats) {
-	files := src.Files()
-
-	log.Printf("%v: %d packets, %d windows (%d flagged), file %d: %s",
-		elapsed.Round(time.Second),
-		src.Stats().Packets,
-		agg.Stats().Closed,
-		stats.FlaggedWindows,
-		len(files),
-		filepath.Base(src.CurrentFile()))
-}
-
 func printSummary(r *report.Run) {
 	s := r.Stats
 
-	truncated := 0
-	for _, f := range r.Inputs {
-		if f.Truncated {
-			truncated++
+	log.Printf("done in %.1fs (%.0f packets/s), ended: %s", s.WallSeconds, s.PacketsPerSecond, r.EndReason)
+
+	if r.Source == "pcap" {
+		truncated := 0
+		for _, f := range r.Inputs {
+			if f.Truncated {
+				truncated++
+			}
+		}
+
+		log.Printf("  files:    %d read, %d truncated", len(r.Inputs), truncated)
+	}
+
+	log.Printf("  packets:  %d IP, %d non-IP frames skipped, %d out of order", s.Packets, s.Skipped, s.Window.Late)
+
+	if l := r.Live; l != nil {
+		log.Printf("  socket:   %d offered, %d dropped (buffer %d bytes), %d without kernel timestamp",
+			l.Socket.KernelTotal, l.Socket.KernelDropped, l.Socket.RecvBuffer, l.Socket.FallbackStamps)
+
+		if l.NICDelta != nil {
+			log.Printf("  nic:      %d received, %d dropped, %d fifo errors (see run.json for driver counters)",
+				l.NICDelta["dev.rx_packets"], l.NICDelta["dev.rx_drop"], l.NICDelta["dev.rx_fifo"])
+		}
+
+		for _, w := range l.NICWarnings {
+			log.Printf("  nic:      %s", w)
 		}
 	}
 
-	suffix := ""
-	if r.Interrupted {
-		suffix = ", interrupted by user"
-	}
-
-	log.Printf("done in %.1fs (%.0f packets/s)%s", s.WallSeconds, s.PacketsPerSecond, suffix)
-	log.Printf("  files:    %d read, %d truncated", len(r.Inputs), truncated)
-	log.Printf("  packets:  %d IP, %d non-IP frames skipped, %d out of order", s.Packets, s.Skipped, s.Window.Late)
 	log.Printf("  windows:  %d closed, %d empty, %d evaluated, %d flagged", s.Window.Closed, s.Window.Empty, s.EvaluatedWindows, s.FlaggedWindows)
 	log.Printf("  pauses:   %d jumps over %d epochs", s.Window.Jumps, s.Window.SkippedEpochs)
 	log.Printf("  sources:  %d flagged IP rows, %d tracked, %d evicted", s.FlaggedIPRows, s.TrackedIPs, s.EvictedIPs)
 
 	if s.Window.Late > 0 {
-		log.Printf("warning: %d out-of-order packets were dropped; the inputs are not in time order", s.Window.Late)
+		log.Printf("warning: %d out-of-order packets were dropped; the input is not in time order", s.Window.Late)
 	}
 }

@@ -95,6 +95,12 @@ type WindowResult struct {
 	// was open.
 	Late uint64
 
+	// KernelDrops is the number of packets the capture socket dropped,
+	// for lack of buffer space, between the previous window closing and
+	// this one. It is set by the caller for live capture, and is -1 when
+	// not measured, as for trace files.
+	KernelDrops int64
+
 	// Evaluated is false when the window could not be judged: in
 	// ModeCombined, when there is no adjacent previous window to combine
 	// with (the first window, and the first after a jump). Nothing is
@@ -193,6 +199,7 @@ func (e *Evaluator) Evaluate(c window.Closed) WindowResult {
 		Packets:       w.Packets,
 		Bytes:         w.Bytes,
 		Late:          w.Late,
+		KernelDrops:   -1,
 		ClosedAt:      c.ClosedAt,
 		EvalStart:     e.now(),
 	}

@@ -52,13 +52,14 @@ func TestCSVSink(t *testing.T) {
 
 	results := []detector.WindowResult{
 		// The first window: nothing to combine with, so not evaluated.
-		{Epoch: 10, Start: start, End: start.Add(500 * time.Millisecond), Packets: 7, Bytes: 700, ClosedAt: closed},
+		{Epoch: 10, Start: start, End: start.Add(500 * time.Millisecond), Packets: 7, Bytes: 700,
+			KernelDrops: -1, ClosedAt: closed},
 
 		// A window after a jump with late packets, evaluated, threshold
 		// from the floor, one flagged source and one in warm-up.
 		{
 			Epoch: 20, Start: start.Add(5 * time.Second), End: start.Add(5500 * time.Millisecond),
-			SkippedBefore: 9, Packets: 50, Bytes: 5000, Late: 2,
+			SkippedBefore: 9, Packets: 50, Bytes: 5000, Late: 2, KernelDrops: 13,
 			Evaluated: true, EvaluatedPackets: 90,
 			Verdict: iqr.Verdict{Threshold: 210.5, QuartileBound: 120, FromFloor: true},
 			IPs: []detector.IPResult{
@@ -89,7 +90,8 @@ func TestCSVSink(t *testing.T) {
 	}
 
 	skipped := windows[0]
-	if skipped["evaluated"] != "false" || skipped["threshold"] != "" || skipped["malicious"] != "" {
+	if skipped["evaluated"] != "false" || skipped["threshold"] != "" || skipped["malicious"] != "" ||
+		skipped["kernel_drops"] != "" {
 		t.Errorf("unevaluated window row = %v, want empty detection columns", skipped)
 	}
 
@@ -99,6 +101,7 @@ func TestCSVSink(t *testing.T) {
 		"start_ns":          "1700000005000000000",
 		"skipped_before":    "9",
 		"late":              "2",
+		"kernel_drops":      "13",
 		"evaluated_packets": "90",
 		"threshold":         "210.50",
 		"quartile_bound":    "120.00",

@@ -34,7 +34,7 @@ type Sink interface {
 // nanoseconds since the Unix epoch.
 var windowColumns = []string{
 	"epoch", "start_ns", "end_ns",
-	"skipped_before", "packets", "bytes", "late",
+	"skipped_before", "packets", "bytes", "late", "kernel_drops",
 	"evaluated", "evaluated_packets",
 	"warm_up", "threshold", "quartile_bound", "threshold_term", "malicious",
 	"flagged_ips",
@@ -118,6 +118,7 @@ func (s *CSVSink) Write(r *detector.WindowResult) error {
 	row = append(row,
 		epoch, ns(r.Start), ns(r.End),
 		strconv.FormatInt(r.SkippedBefore, 10), u(r.Packets), u(r.Bytes), u(r.Late),
+		drops(r.KernelDrops),
 		strconv.FormatBool(r.Evaluated),
 	)
 
@@ -201,6 +202,16 @@ func (s *CSVSink) Close() error {
 	s.files, s.bufs = nil, nil
 
 	return err
+}
+
+// drops writes a kernel drop count, leaving the cell empty when it was not
+// measured so that it cannot be mistaken for zero.
+func drops(v int64) string {
+	if v < 0 {
+		return ""
+	}
+
+	return strconv.FormatInt(v, 10)
 }
 
 func u(v uint64) string {
