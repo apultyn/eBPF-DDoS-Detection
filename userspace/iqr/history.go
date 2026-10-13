@@ -29,6 +29,11 @@ func (h *history) size() int {
 	return len(h.values)
 }
 
+// reset empties the history, keeping its buffer for reuse.
+func (h *history) reset() {
+	h.values = h.values[:0]
+}
+
 // add appends a new sample, evicting the oldest sample first if the
 // history is already at capacity.
 func (h *history) add(v float64) {
@@ -39,6 +44,20 @@ func (h *history) add(v float64) {
 		h.values = append(h.values[:0], h.values[1:]...)
 	}
 	h.values = append(h.values, v)
+}
+
+// thresholdParts is a computed threshold together with the terms it was
+// built from, so callers can see which side of the max was taken.
+type thresholdParts struct {
+	// final is the threshold counts are compared against.
+	final float64
+
+	// quartile is Q3 + IQRMultiplier*IQR, whether or not it was used.
+	quartile float64
+
+	// floored reports that BaseThreshold exceeded quartile and was used
+	// as the base instead.
+	floored bool
 }
 
 // threshold computes the IQR-based threshold from the samples currently
@@ -52,7 +71,7 @@ func (h *history) add(v float64) {
 // Detector, since it also determines whether Detector should be adding
 // samples during warm-up. Called directly with very few samples, threshold
 // still returns a number, just a less statistically meaningful one.
-func (h *history) threshold(cfg Config) float64 {
+func (h *history) threshold(cfg Config) thresholdParts {
 	sorted := make([]float64, len(h.values))
 	copy(sorted, h.values)
 	sort.Float64s(sorted)
@@ -61,8 +80,14 @@ func (h *history) threshold(cfg Config) float64 {
 	q3 := percentile(sorted, 0.75)
 	iqrValue := q3 - q1
 
-	base := math.Max(q3+cfg.IQRMultiplier*iqrValue, cfg.BaseThreshold)
-	return base + cfg.OffsetMultiplier*stdDev(h.values)
+	quartile := q3 + cfg.IQRMultiplier*iqrValue
+	floored := cfg.BaseThreshold > quartile
+
+	return thresholdParts{
+		final:    math.Max(quartile, cfg.BaseThreshold) + cfg.OffsetMultiplier*stdDev(h.values),
+		quartile: quartile,
+		floored:  floored,
+	}
 }
 
 // percentile returns the p-th percentile (0 <= p <= 1) of an

@@ -59,3 +59,7 @@ type Source interface {
 
 // ErrClosed is returned by Next after Close has been called.
 var ErrClosed = errors.New("capture: source closed")
+
+// ErrTimeout is returned by a live source's Next when its deadline passes
+// before a packet arrives. The source stays usable.
+var ErrTimeout = errors.New("capture: deadline reached")

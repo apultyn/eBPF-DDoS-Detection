@@ -16,6 +16,11 @@
 // cases, a sample is only folded into future thresholds when it wasn't
 // itself flagged malicious — otherwise an attack would skew the baseline
 // used to detect it.
+//
+// BaseThreshold is uncalibrated for this detector: the thesis set it by
+// trial and error for its own dataset and a 1 s window. Every verdict
+// reports whether the floor or the quartile term was used, so the floor
+// can be recalibrated from measured traffic.
 
 package iqr
 
@@ -33,7 +38,8 @@ type Config struct {
 	// BaseThreshold is the minimum threshold ever returned, regardless of how
 	// quiet observed traffic has been. Prevents the threshold from
 	// collapsing toward zero during unusually quiet periods. The thesis
-	// used 200, chosen by trial and error for its dataset.
+	// used 200, chosen by trial and error for its dataset and window
+	// length; it has not been calibrated for this detector.
 	BaseThreshold float64
 
 	// IQRMultiplier scales the IQR before adding it to Q3. 1.5 is the
@@ -57,13 +63,26 @@ type Config struct {
 	// MaxHistorySize bounds how many recent samples are retained per
 	// history (per window, and per IP). Older samples are evicted
 	// first-in-first-out, keeping memory bounded regardless of how long
-	// the process runs or how many distinct IPs it has seen.
+	// the process runs.
 	MaxHistorySize int
+
+	// MaxTrackedIPs caps how many source addresses keep a per-IP history.
+	// When the cap is reached, the address evaluated least recently is
+	// evicted and starts over with a fresh warm-up if it returns. Together
+	// with MaxHistorySize this bounds per-IP state to a constant:
+	// MaxTrackedIPs * MaxHistorySize samples of 8 bytes, 4 MB with the
+	// defaults. Zero selects DefaultMaxTrackedIPs. Not specified in the
+	// thesis; this package's own addition.
+	MaxTrackedIPs int
 }
 
+// DefaultMaxTrackedIPs is the per-IP history cap used when
+// Config.MaxTrackedIPs is zero.
+const DefaultMaxTrackedIPs = 1000
+
 // DefaultConfig returns the parameters used in Wickman & Rygaard's thesis,
-// plus reasonable defaults for the two parameters the thesis leaves
-// unspecified (MinSamples, MaxHistorySize).
+// plus reasonable defaults for the parameters the thesis leaves
+// unspecified (MinSamples, MaxHistorySize, MaxTrackedIPs).
 func DefaultConfig() Config {
 	return Config{
 		BaseThreshold:    200,
@@ -71,6 +90,7 @@ func DefaultConfig() Config {
 		OffsetMultiplier: 2,
 		MinSamples:       4,
 		MaxHistorySize:   500,
+		MaxTrackedIPs:    DefaultMaxTrackedIPs,
 	}
 }
 
@@ -91,6 +111,22 @@ type Verdict struct {
 
 	// IsMalicious reports whether the observed count exceeded Threshold.
 	IsMalicious bool
+
+	// WarmUp reports that too few samples were held to compute a real
+	// threshold. Threshold is then BaseThreshold, but the count was not
+	// compared against it and IsMalicious is always false.
+	WarmUp bool
+
+	// FromFloor reports which term of max(Q3 + IQRMultiplier*IQR,
+	// BaseThreshold) the threshold was built from: true when
+	// BaseThreshold was the larger, false when the quartile term was.
+	// Always false during warm-up.
+	FromFloor bool
+
+	// QuartileBound is Q3 + IQRMultiplier*IQR, reported whichever term
+	// won, so the distance between the floor and the traffic's own
+	// statistics can be measured. Zero during warm-up.
+	QuartileBound float64
 }
 
 // Detector holds the rolling history needed to compute IQR-based
@@ -101,16 +137,20 @@ type Detector struct {
 
 	mu            sync.Mutex
 	windowHistory *history
-	ipHistories   map[flow.Key]*history
+	ipHistories   *ipHistories
 }
 
 // NewDetector creates a Detector using the given configuration. Pass
 // DefaultConfig() to match the thesis's parameters.
 func NewDetector(cfg Config) *Detector {
+	if cfg.MaxTrackedIPs == 0 {
+		cfg.MaxTrackedIPs = DefaultMaxTrackedIPs
+	}
+
 	return &Detector{
 		cfg:           cfg,
 		windowHistory: newHistory(cfg.MaxHistorySize),
-		ipHistories:   make(map[flow.Key]*history),
+		ipHistories:   newIPHistories(cfg.MaxTrackedIPs, cfg.MaxHistorySize),
 	}
 }
 
@@ -127,11 +167,10 @@ func (d *Detector) EvaluateWindow(stats WindowStats) Verdict {
 
 	if d.windowHistory.size() < d.cfg.MinSamples {
 		d.windowHistory.add(total)
-		return Verdict{Threshold: d.cfg.BaseThreshold, IsMalicious: false}
+		return Verdict{Threshold: d.cfg.BaseThreshold, WarmUp: true}
 	}
 
-	threshold := d.windowHistory.threshold(d.cfg)
-	verdict := Verdict{Threshold: threshold, IsMalicious: total > threshold}
+	verdict := judge(total, d.windowHistory.threshold(d.cfg))
 
 	if !verdict.IsMalicious {
 		d.windowHistory.add(total)
@@ -141,7 +180,9 @@ func (d *Detector) EvaluateWindow(stats WindowStats) Verdict {
 }
 
 // EvaluateIP compares count against ip's current per-IP threshold and
-// returns the verdict, creating a fresh history for ip on first use.
+// returns the verdict, creating a fresh history for ip on first use. If
+// MaxTrackedIPs addresses are already tracked, the least recently
+// evaluated one is evicted to make room.
 //
 // windowIsMalicious should be the IsMalicious value EvaluateWindow
 // returned for the window this IP's count belongs to. When true, ip's
@@ -157,11 +198,7 @@ func (d *Detector) EvaluateIP(ip flow.Key, count uint64, windowIsMalicious bool)
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	h, ok := d.ipHistories[ip]
-	if !ok {
-		h = newHistory(d.cfg.MaxHistorySize)
-		d.ipHistories[ip] = h
-	}
+	h := d.ipHistories.get(ip)
 
 	c := float64(count)
 
@@ -169,15 +206,42 @@ func (d *Detector) EvaluateIP(ip flow.Key, count uint64, windowIsMalicious bool)
 		if !windowIsMalicious {
 			h.add(c)
 		}
-		return Verdict{Threshold: d.cfg.BaseThreshold, IsMalicious: false}
+		return Verdict{Threshold: d.cfg.BaseThreshold, WarmUp: true}
 	}
 
-	threshold := h.threshold(d.cfg)
-	verdict := Verdict{Threshold: threshold, IsMalicious: c > threshold}
+	verdict := judge(c, h.threshold(d.cfg))
 
 	if !windowIsMalicious {
 		h.add(c)
 	}
 
 	return verdict
+}
+
+// TrackedIPs returns how many source addresses currently hold a per-IP
+// history. It never exceeds Config.MaxTrackedIPs.
+func (d *Detector) TrackedIPs() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	return d.ipHistories.len()
+}
+
+// EvictedIPs returns how many per-IP histories have been evicted to stay
+// within Config.MaxTrackedIPs.
+func (d *Detector) EvictedIPs() uint64 {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	return d.ipHistories.evicted
+}
+
+// judge compares count against a computed threshold.
+func judge(count float64, t thresholdParts) Verdict {
+	return Verdict{
+		Threshold:     t.final,
+		IsMalicious:   count > t.final,
+		FromFloor:     t.floored,
+		QuartileBound: t.quartile,
+	}
 }
