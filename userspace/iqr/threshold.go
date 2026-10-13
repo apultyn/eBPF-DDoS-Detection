@@ -21,10 +21,18 @@
 // trial and error for its own dataset and a 1 s window. Every verdict
 // reports whether the floor or the quartile term was used, so the floor
 // can be recalibrated from measured traffic.
+//
+// At the IP level, IPMode selects which history a source is judged
+// against: its own, one history shared by all sources, or its own once it
+// has one and the shared history until then (the default). The shared
+// history lets a source that first appears during an attack be judged at
+// once; with per-IP histories alone it would stay in warm-up for as long
+// as the attack keeps every window flagged.
 
 package iqr
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
@@ -74,23 +82,93 @@ type Config struct {
 	// defaults. Zero selects DefaultMaxTrackedIPs. Not specified in the
 	// thesis; this package's own addition.
 	MaxTrackedIPs int
+
+	// IPMode selects which history a source is judged against. The zero
+	// value is IPModePerIP, the behaviour before the modes were added;
+	// DefaultConfig selects IPModeHybrid.
+	IPMode IPMode
+
+	// MaxSharedHistorySize bounds the history shared by all sources, used
+	// by IPModeShared and IPModeHybrid. Every candidate of a normal window
+	// adds a sample, so with K candidates per window it covers the last
+	// MaxSharedHistorySize/K windows. Zero selects
+	// DefaultMaxSharedHistorySize.
+	MaxSharedHistorySize int
 }
 
 // DefaultMaxTrackedIPs is the per-IP history cap used when
 // Config.MaxTrackedIPs is zero.
 const DefaultMaxTrackedIPs = 1000
 
+// DefaultMaxSharedHistorySize is the shared history size used when
+// Config.MaxSharedHistorySize is zero: 500 windows of 10 candidates, the
+// same span of windows as the default MaxHistorySize.
+const DefaultMaxSharedHistorySize = 5000
+
+// IPMode selects the history a source IP is judged against.
+type IPMode int
+
+const (
+	// IPModePerIP judges every source against its own history only. A
+	// source stays in warm-up until it has MinSamples samples, and its
+	// history only fills in windows that were not flagged, so a source
+	// first seen during an attack is never judged while the attack lasts.
+	IPModePerIP IPMode = iota
+
+	// IPModeShared judges every source against one history built from the
+	// counts of all candidates in normal windows. This appears to be what
+	// Wickman & Rygaard's thesis does: its per-IP endpoint answers a whole
+	// list of addresses with a single threshold (§3.2.5.2, §3.2.6).
+	IPModeShared
+
+	// IPModeHybrid judges a source against its own history once that has
+	// MinSamples samples, and against the shared history until then. A
+	// known source keeps a threshold fitted to its own traffic, and a new
+	// one is judged from its first window instead of waiting in warm-up.
+	IPModeHybrid
+)
+
+func (m IPMode) String() string {
+	switch m {
+	case IPModePerIP:
+		return "per-ip"
+	case IPModeShared:
+		return "shared"
+	case IPModeHybrid:
+		return "hybrid"
+	}
+
+	return fmt.Sprintf("IPMode(%d)", int(m))
+}
+
+// ParseIPMode converts a flag value to an IPMode.
+func ParseIPMode(s string) (IPMode, error) {
+	switch s {
+	case "per-ip":
+		return IPModePerIP, nil
+	case "shared":
+		return IPModeShared, nil
+	case "hybrid":
+		return IPModeHybrid, nil
+	}
+
+	return 0, fmt.Errorf("unknown ip mode %q (want per-ip, shared or hybrid)", s)
+}
+
 // DefaultConfig returns the parameters used in Wickman & Rygaard's thesis,
 // plus reasonable defaults for the parameters the thesis leaves
-// unspecified (MinSamples, MaxHistorySize, MaxTrackedIPs).
+// unspecified (MinSamples, MaxHistorySize, MaxTrackedIPs, IPMode,
+// MaxSharedHistorySize).
 func DefaultConfig() Config {
 	return Config{
-		BaseThreshold:    200,
-		IQRMultiplier:    1.5,
-		OffsetMultiplier: 2,
-		MinSamples:       4,
-		MaxHistorySize:   500,
-		MaxTrackedIPs:    DefaultMaxTrackedIPs,
+		BaseThreshold:        200,
+		IQRMultiplier:        1.5,
+		OffsetMultiplier:     2,
+		MinSamples:           4,
+		MaxHistorySize:       500,
+		MaxTrackedIPs:        DefaultMaxTrackedIPs,
+		IPMode:               IPModeHybrid,
+		MaxSharedHistorySize: DefaultMaxSharedHistorySize,
 	}
 }
 
@@ -127,6 +205,18 @@ type Verdict struct {
 	// won, so the distance between the floor and the traffic's own
 	// statistics can be measured. Zero during warm-up.
 	QuartileBound float64
+
+	// Shared reports that an IP verdict came from the history shared by
+	// all sources rather than from the source's own history. During
+	// warm-up it says which history was still filling. Always false for
+	// window verdicts and in IPModePerIP.
+	Shared bool
+}
+
+// IPCount is one candidate source and its count in a window.
+type IPCount struct {
+	IP    flow.Key
+	Count uint64
 }
 
 // Detector holds the rolling history needed to compute IQR-based
@@ -138,6 +228,7 @@ type Detector struct {
 	mu            sync.Mutex
 	windowHistory *history
 	ipHistories   *ipHistories
+	sharedHistory *history
 }
 
 // NewDetector creates a Detector using the given configuration. Pass
@@ -147,10 +238,15 @@ func NewDetector(cfg Config) *Detector {
 		cfg.MaxTrackedIPs = DefaultMaxTrackedIPs
 	}
 
+	if cfg.MaxSharedHistorySize == 0 {
+		cfg.MaxSharedHistorySize = DefaultMaxSharedHistorySize
+	}
+
 	return &Detector{
 		cfg:           cfg,
 		windowHistory: newHistory(cfg.MaxHistorySize),
 		ipHistories:   newIPHistories(cfg.MaxTrackedIPs, cfg.MaxHistorySize),
+		sharedHistory: newHistory(cfg.MaxSharedHistorySize),
 	}
 }
 
@@ -179,43 +275,92 @@ func (d *Detector) EvaluateWindow(stats WindowStats) Verdict {
 	return verdict
 }
 
-// EvaluateIP compares count against ip's current per-IP threshold and
-// returns the verdict, creating a fresh history for ip on first use. If
-// MaxTrackedIPs addresses are already tracked, the least recently
-// evaluated one is evicted to make room.
+// EvaluateIPs judges every candidate source of one window and returns a
+// verdict per candidate, in order. Which history a source is judged
+// against depends on Config.IPMode:
+//
+//   - IPModePerIP: its own history; warm-up until that has MinSamples.
+//   - IPModeShared: the shared history; warm-up until that has MinSamples.
+//   - IPModeHybrid: its own history once that has MinSamples, otherwise
+//     the shared history, and warm-up only while both are short.
+//
+// A source's own history is created on first use. If MaxTrackedIPs
+// addresses are already tracked, the least recently evaluated one is
+// evicted to make room. IPModeShared keeps no per-source histories.
 //
 // windowIsMalicious should be the IsMalicious value EvaluateWindow
-// returned for the window this IP's count belongs to. When true, ip's
-// history is left untouched even if this specific count is within its own
-// normal threshold — matching the thesis, which freezes all per-IP history
-// during a malicious window, not just for IPs that individually exceed
-// their threshold. One consequence worth knowing: an IP that spikes hard
-// enough to be individually flagged inside an otherwise-normal window
-// still gets folded into its own baseline (since windowIsMalicious is
-// false in that case), which could raise its future threshold. The thesis
-// doesn't address this edge case.
-func (d *Detector) EvaluateIP(ip flow.Key, count uint64, windowIsMalicious bool) Verdict {
+// returned for the window these counts belong to. When true, every
+// history is left untouched even if a count is within its threshold —
+// matching the thesis, which freezes all per-IP history during a
+// malicious window, not just for IPs that individually exceed their
+// threshold. One consequence worth knowing: an IP that spikes hard enough
+// to be individually flagged inside an otherwise-normal window still gets
+// folded into its baseline (since windowIsMalicious is false in that
+// case), which could raise its future threshold. The thesis does the same
+// at the IP level, to avoid holding on to wrongly flagged addresses.
+//
+// Every candidate is judged against the shared history as it stood before
+// the window, and the window's counts are added to it only afterwards, so
+// the order of the candidates does not change any verdict.
+func (d *Detector) EvaluateIPs(ips []IPCount, windowIsMalicious bool) []Verdict {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	h := d.ipHistories.get(ip)
+	usesOwn := d.cfg.IPMode != IPModeShared
+	usesShared := d.cfg.IPMode != IPModePerIP
 
-	c := float64(count)
+	var (
+		shared      thresholdParts
+		sharedReady bool
+	)
 
-	if h.size() < d.cfg.MinSamples {
-		if !windowIsMalicious {
-			h.add(c)
+	if usesShared && d.sharedHistory.size() >= d.cfg.MinSamples {
+		shared = d.sharedHistory.threshold(d.cfg)
+		sharedReady = true
+	}
+
+	verdicts := make([]Verdict, len(ips))
+
+	for i, ip := range ips {
+		c := float64(ip.Count)
+
+		var own *history
+		if usesOwn {
+			own = d.ipHistories.get(ip.IP)
 		}
-		return Verdict{Threshold: d.cfg.BaseThreshold, WarmUp: true}
+
+		switch {
+		case usesOwn && own.size() >= d.cfg.MinSamples:
+			verdicts[i] = judge(c, own.threshold(d.cfg))
+		case !usesShared:
+			verdicts[i] = Verdict{Threshold: d.cfg.BaseThreshold, WarmUp: true}
+		case sharedReady:
+			verdicts[i] = judge(c, shared)
+			verdicts[i].Shared = true
+		default:
+			verdicts[i] = Verdict{Threshold: d.cfg.BaseThreshold, WarmUp: true, Shared: true}
+		}
+
+		if usesOwn && !windowIsMalicious {
+			own.add(c)
+		}
 	}
 
-	verdict := judge(c, h.threshold(d.cfg))
-
-	if !windowIsMalicious {
-		h.add(c)
+	if usesShared && !windowIsMalicious {
+		for _, ip := range ips {
+			d.sharedHistory.add(float64(ip.Count))
+		}
 	}
 
-	return verdict
+	return verdicts
+}
+
+// EvaluateIP judges a single source, as EvaluateIPs does for a window
+// with one candidate. Use EvaluateIPs for a window with several
+// candidates, so that they are all judged against the same shared
+// history.
+func (d *Detector) EvaluateIP(ip flow.Key, count uint64, windowIsMalicious bool) Verdict {
+	return d.EvaluateIPs([]IPCount{{IP: ip, Count: count}}, windowIsMalicious)[0]
 }
 
 // TrackedIPs returns how many source addresses currently hold a per-IP

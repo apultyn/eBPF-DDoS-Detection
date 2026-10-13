@@ -128,6 +128,9 @@ type Config struct {
 	MinSamples       int     `json:"iqr_min_samples"`
 	MaxHistorySize   int     `json:"iqr_max_history"`
 	MaxTrackedIPs    int     `json:"iqr_max_tracked_ips"`
+
+	IPMode               string `json:"iqr_ip_mode"`
+	MaxSharedHistorySize int    `json:"iqr_max_shared_history"`
 }
 
 // Stats summarizes the run.

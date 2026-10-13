@@ -66,7 +66,7 @@ func TestCSVSink(t *testing.T) {
 				{IP: flow.MustParse("2001:db8::1"), Current: 40, Previous: 30, Evaluated: 70,
 					Verdict: iqr.Verdict{Threshold: 60, QuartileBound: 55.25, IsMalicious: true}},
 				{IP: flow.MustParse("192.0.2.9"), Current: 5, Previous: 0, Evaluated: 5,
-					Verdict: iqr.Verdict{Threshold: 200, WarmUp: true}},
+					Verdict: iqr.Verdict{Threshold: 200, WarmUp: true, Shared: true}},
 			},
 			ClosedAt: closed, EvalStart: closed.Add(1), EvalEnd: closed.Add(2),
 		},
@@ -118,12 +118,14 @@ func TestCSVSink(t *testing.T) {
 	flagged, warming := ips[0], ips[1]
 
 	if flagged["ip"] != "2001:db8::1" || flagged["evaluated"] != "70" ||
-		flagged["threshold_term"] != "iqr" || flagged["malicious"] != "true" {
+		flagged["threshold_term"] != "iqr" || flagged["malicious"] != "true" ||
+		flagged["threshold_source"] != "own" {
 		t.Errorf("flagged IP row = %v", flagged)
 	}
 
-	if warming["ip"] != "192.0.2.9" || warming["warm_up"] != "true" || warming["threshold"] != "" {
-		t.Errorf("warm-up IP row = %v, want an IPv4 address with no threshold", warming)
+	if warming["ip"] != "192.0.2.9" || warming["warm_up"] != "true" || warming["threshold"] != "" ||
+		warming["threshold_source"] != "shared" {
+		t.Errorf("warm-up IP row = %v, want an IPv4 address with no threshold, waiting on the shared history", warming)
 	}
 }
 

@@ -173,6 +173,7 @@ func TestDetector_EvaluateIP_FreezesDuringMaliciousWindow(t *testing.T) {
 func TestDetector_EvaluateIP_SeparateHistoryPerIP(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.MinSamples = 2
+	cfg.IPMode = IPModePerIP
 	d := NewDetector(cfg)
 
 	// Two different IPs should not influence each other's thresholds.
@@ -191,6 +192,7 @@ func TestDetector_EvaluateIP_EvictsLeastRecentlyUsed(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.MinSamples = 2
 	cfg.MaxTrackedIPs = 3
+	cfg.IPMode = IPModePerIP
 	d := NewDetector(cfg)
 
 	ip := func(i int) flow.Key {
@@ -323,5 +325,206 @@ func TestDetector_ReportsWhichTermWasUsed(t *testing.T) {
 				approxEqual(t, v.QuartileBound, tt.wantQuartile, 1e-9)
 			}
 		})
+	}
+}
+
+func TestParseIPMode(t *testing.T) {
+	for _, m := range []IPMode{IPModePerIP, IPModeShared, IPModeHybrid} {
+		got, err := ParseIPMode(m.String())
+		if err != nil || got != m {
+			t.Errorf("ParseIPMode(%q) = %v, %v; want %v", m.String(), got, err, m)
+		}
+	}
+
+	if _, err := ParseIPMode("perip"); err == nil {
+		t.Error("ParseIPMode accepted an unknown mode")
+	}
+}
+
+func TestIPMode_Defaults(t *testing.T) {
+	if got := DefaultConfig().IPMode; got != IPModeHybrid {
+		t.Errorf("DefaultConfig().IPMode = %v, want hybrid", got)
+	}
+
+	// A Config built by hand without IPMode keeps the per-IP behaviour.
+	if got := (Config{}).IPMode; got != IPModePerIP {
+		t.Errorf("zero Config IPMode = %v, want per-ip", got)
+	}
+}
+
+// ipModeConfig is a small configuration whose thresholds are easy to
+// work out by hand: no floor, two samples to leave warm-up.
+func ipModeConfig(mode IPMode) Config {
+	return Config{
+		BaseThreshold:    0,
+		IQRMultiplier:    1.5,
+		OffsetMultiplier: 2,
+		MinSamples:       2,
+		MaxHistorySize:   50,
+		IPMode:           mode,
+	}
+}
+
+var (
+	srcA = flow.MustParse("10.0.0.1")
+	srcB = flow.MustParse("10.0.0.2")
+	srcC = flow.MustParse("10.0.0.3")
+	srcD = flow.MustParse("10.0.0.4")
+)
+
+// twoNormalWindows warms up A and B and gives the shared history
+// {50, 60, 50, 60}: Q1 = 50, Q3 = 60, quartile term 75, sample standard
+// deviation sqrt(100/3), so a shared threshold of about 86.55.
+func twoNormalWindows(d *Detector) {
+	for range 2 {
+		d.EvaluateIPs([]IPCount{{srcA, 50}, {srcB, 60}}, false)
+	}
+}
+
+// The case the hybrid mode exists for: a source first seen during an
+// attack is judged against the shared history at once, while a known
+// source keeps its own threshold.
+func TestDetector_Hybrid_NewSourceIsJudgedDuringAttack(t *testing.T) {
+	d := NewDetector(ipModeConfig(IPModeHybrid))
+	twoNormalWindows(d)
+
+	v := d.EvaluateIPs([]IPCount{{srcC, 5000}, {srcD, 55}, {srcA, 50}}, true)
+
+	attacker, newcomer, known := v[0], v[1], v[2]
+
+	if attacker.WarmUp || !attacker.Shared || !attacker.IsMalicious {
+		t.Errorf("new attacking source: %+v, want flagged against the shared history", attacker)
+	}
+	approxEqual(t, attacker.Threshold, 75+2*math.Sqrt(100.0/3), 1e-9)
+
+	if newcomer.WarmUp || !newcomer.Shared || newcomer.IsMalicious {
+		t.Errorf("new normal source: %+v, want judged against the shared history and not flagged", newcomer)
+	}
+
+	if known.WarmUp || known.Shared || known.IsMalicious {
+		t.Errorf("known source: %+v, want judged against its own history and not flagged", known)
+	}
+}
+
+// Per-IP mode keeps the old behaviour: the new source stays in warm-up.
+func TestDetector_PerIP_NewSourceStaysInWarmUpDuringAttack(t *testing.T) {
+	d := NewDetector(ipModeConfig(IPModePerIP))
+	twoNormalWindows(d)
+
+	for range 5 {
+		v := d.EvaluateIPs([]IPCount{{srcC, 5000}}, true)[0]
+		if !v.WarmUp || v.Shared || v.IsMalicious {
+			t.Fatalf("per-ip mode: new source %+v, want warm-up without the shared history", v)
+		}
+	}
+}
+
+// Shared mode judges every source, known or not, against the shared
+// history, and keeps no history per source.
+func TestDetector_Shared_JudgesEverySourceAgainstOneHistory(t *testing.T) {
+	d := NewDetector(ipModeConfig(IPModeShared))
+	twoNormalWindows(d)
+
+	v := d.EvaluateIPs([]IPCount{{srcA, 52}, {srcC, 5000}}, true)
+
+	if !v[0].Shared || !v[1].Shared || v[0].Threshold != v[1].Threshold {
+		t.Errorf("verdicts %+v, want both against the same shared threshold", v)
+	}
+	if v[0].IsMalicious || !v[1].IsMalicious {
+		t.Errorf("verdicts %+v, want only the 5000 flagged", v)
+	}
+	if got := d.TrackedIPs(); got != 0 {
+		t.Errorf("TrackedIPs = %d, want 0 in shared mode", got)
+	}
+}
+
+// All candidates of a window see the shared history as it stood before
+// the window: a large count must not raise the threshold of the
+// candidates after it.
+func TestDetector_SharedHistoryLearnsAfterTheWindow(t *testing.T) {
+	d := NewDetector(ipModeConfig(IPModeShared))
+	twoNormalWindows(d)
+
+	v := d.EvaluateIPs([]IPCount{{srcC, 70}, {srcD, 80}}, false)
+	if v[0].Threshold != v[1].Threshold {
+		t.Errorf("thresholds %v and %v differ within one window", v[0].Threshold, v[1].Threshold)
+	}
+
+	// The window was normal, so its counts are learned afterwards and
+	// the next window sees a higher threshold.
+	next := d.EvaluateIP(srcC, 70, false)
+	if next.Threshold <= v[0].Threshold {
+		t.Errorf("threshold %v after a normal window, want above %v", next.Threshold, v[0].Threshold)
+	}
+}
+
+// A malicious window must not change the shared history, whatever the
+// individual verdicts were.
+func TestDetector_SharedHistoryFreezesDuringMaliciousWindow(t *testing.T) {
+	d := NewDetector(ipModeConfig(IPModeHybrid))
+	twoNormalWindows(d)
+
+	before := d.EvaluateIP(srcC, 1, true)
+	for range 10 {
+		d.EvaluateIPs([]IPCount{{srcC, 5000}, {srcD, 40}}, true)
+	}
+	after := d.EvaluateIP(srcD, 1, true)
+
+	if !before.Shared || !after.Shared {
+		t.Fatalf("probes %+v and %+v, want both against the shared history", before, after)
+	}
+	approxEqual(t, after.Threshold, before.Threshold, 1e-9)
+}
+
+// In hybrid mode a source moves from the shared history to its own once
+// it has MinSamples samples of its own.
+func TestDetector_Hybrid_SwitchesToOwnHistoryOnceWarm(t *testing.T) {
+	d := NewDetector(ipModeConfig(IPModeHybrid))
+	twoNormalWindows(d)
+
+	for i, wantShared := range []bool{true, true, false} {
+		v := d.EvaluateIP(srcC, 55, false)
+		if v.WarmUp || v.Shared != wantShared {
+			t.Errorf("evaluation %d: %+v, want Shared = %v and no warm-up", i, v, wantShared)
+		}
+	}
+}
+
+// Before either history has MinSamples, hybrid mode reports warm-up and
+// says it was waiting on the shared history.
+func TestDetector_Hybrid_WarmsUpOnlyWhileBothHistoriesAreShort(t *testing.T) {
+	d := NewDetector(ipModeConfig(IPModeHybrid))
+
+	v := d.EvaluateIP(srcA, 50, false)
+	if !v.WarmUp || !v.Shared || v.IsMalicious {
+		t.Errorf("first evaluation %+v, want shared warm-up", v)
+	}
+
+	// One window with two candidates fills the shared history to
+	// MinSamples, so a newcomer is judged from the next window on.
+	d.EvaluateIPs([]IPCount{{srcA, 50}, {srcB, 60}}, false)
+
+	if v := d.EvaluateIP(srcC, 55, false); v.WarmUp || !v.Shared {
+		t.Errorf("newcomer %+v, want judged against the shared history", v)
+	}
+}
+
+// An address evicted from the per-IP cache loses its own history; in
+// hybrid mode it falls back on the shared history instead of warming up.
+func TestDetector_Hybrid_EvictedSourceFallsBackToShared(t *testing.T) {
+	cfg := ipModeConfig(IPModeHybrid)
+	cfg.MaxTrackedIPs = 2
+	d := NewDetector(cfg)
+	twoNormalWindows(d)
+
+	if v := d.EvaluateIP(srcA, 50, false); v.Shared {
+		t.Fatalf("A before eviction: %+v, want its own history", v)
+	}
+
+	// C and D push A and B out of the cache.
+	d.EvaluateIPs([]IPCount{{srcC, 50}, {srcD, 60}}, false)
+
+	if v := d.EvaluateIP(srcA, 50, false); v.WarmUp || !v.Shared {
+		t.Errorf("A after eviction: %+v, want judged against the shared history", v)
 	}
 }
