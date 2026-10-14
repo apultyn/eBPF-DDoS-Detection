@@ -10,8 +10,9 @@
 // - I: Header Path
 // 2. Attach to Network Interface: sudo ip link set dev lo xdpgeneric obj heavy_keeper.o sec xdp
 // 3. Show Attached Links: ip link show
-// 4. Read From Debug Tracepipe: sudo cat /sys/kernel/debug/tracing/trace_pipe
-// 5. Detatch from Network Interface: sudo ip link set dev lo xdpgeneric off
+// 4. Expose Filepath for Userspace Programs: sudo bpftool map pin name data_sketch_map /sys/fs/bpf/heavy_keeper_map
+// 5. Read From Debug Tracepipe: sudo cat /sys/kernel/debug/tracing/trace_pipe
+// 6. Detatch from Network Interface: sudo ip link set dev lo xdpgeneric off
 
 // -------- Information -------- //
 // struct xdp_md {
@@ -197,26 +198,6 @@ static __always_inline __u32 hash32(const struct in6_addr *ip, __u32 seed)
     return h;
 }
 
-// Helper function to derive index and fingerprint
-static __always_inline void create_hash32(const struct in6_addr *ip, __u32 num_buckets, __u32 *index, __u16 *fingerprint, int row)
-{
-    // Hash IP address to bucket index
-    __u32 h1 = hash32(ip, INDEX_SEEDS[row]);
-    *index = h1 % num_buckets;
-
-    // Hash IP address to fingerprint
-    __u32 h2 = hash32(ip, FINGERPRINT_SEED);
-
-    // Fold 32 bits into 16 bits (or mask lower 16 bits)
-    __u16 fp = (__u16)(h2 ^ (h2 >> 16));
-
-    // Ensure fingerprint is never 0 (0 is reserved for an empty/vacant bucket)
-    if (fp == 0)
-        fp = 1;
-
-    *fingerprint = fp;
-}
-
 // Helper function for HeavyKeeper decay
 // ¤ Note that the random number is generated outside this function and passed to it
 static __always_inline int decay(__u32 count, __u32 random_value)
@@ -227,15 +208,15 @@ static __always_inline int decay(__u32 count, __u32 random_value)
 
     // O(1) array lookup
     __u16 random_sample = (__u16)(random_value & 0xffff);
-    return random_sample < DECAY_TABLE[count];
+    return random_sample < DECAY_TABLE[count]; // return 0 for large flows, returns 1 for small flows
 }
 
 // Helper function that updates the HeavyKeeper sketch across all rows called on each parsed packet
 static __always_inline void update(const struct in6_addr *ip)
 {
-    // Compute fingerprint using corresponding seed
+    // Compute fingerprint for specific IP address
     __u32 fp_raw = hash32(ip, FINGERPRINT_SEED);
-    __u16 fp = (__u16)(fp_raw ^ (fp_raw >> 16)); // Take lower 16 bits
+    __u16 fp = (__u16)(fp_raw ^ (fp_raw >> 16)); // Take lower 16 bits to match bitsize
     if (fp == 0)
         fp = 1; // Reserve 0 for empty slots
 
@@ -244,15 +225,17 @@ static __always_inline void update(const struct in6_addr *ip)
     for (int row = 0; row < DEPTH; row++)
     {
         // Compute column index for this row using SEEDS[row] & bitwise MASK
-        __u32 col = hash32(ip, INDEX_SEEDS[row]) & MASK;
-        __u32 flat_key = (row * WIDTH) + col;
+        __u32 column_index = hash32(ip, INDEX_SEEDS[row]) & MASK; // Restrict bucket index to 32-bits
+        __u32 flat_index = (row * WIDTH) + column_index;          // Calculate flat index
 
-        // Lookup cell in data_sketch_map
-        struct bucket *b = bpf_map_lookup_elem(&data_sketch_map, &flat_key);
-        if (!b)
-            continue; // Satisfy verifier null-pointer check
+        // Lookup cell in data sketch map
+        // ¤ We return a pointer to a bucket struct
+        struct bucket *b = bpf_map_lookup_elem(&data_sketch_map, &flat_index);
+        if (!b) // Satisfy verifier null-pointer check (this should never occur)
+            continue;
 
-        // Case A: Bucket is empty -> Claim it
+        // Case A: Index lands on empty bucket --> Populate it
+        // ¤ Packet is not part of current network traffic flow
         if (b->count == 0)
         {
             b->fp = fp;
@@ -260,21 +243,25 @@ static __always_inline void update(const struct in6_addr *ip)
             continue;
         }
 
-        // Case B: Fingerprint hit -> Increment count
+        // Case B: Index lands on a filled bucket with fingerprint match --> Increment count
+        // ¤ Packet is part of current network traffic flow
         if (b->fp == fp)
         {
-            __sync_fetch_and_add(&b->count, 1);
+            __sync_fetch_and_add(&b->count, 1); // Atomic fetch and add
             continue;
         }
 
-        // Case C: Collision with another flow -> Probabilistic decay
-        __u32 rand_val = bpf_get_prandom_u32();
-        if (decay(b->count, rand_val))
+        // Case C: Index lands on a filled bucket without fingerprint match --> Collision --> Probabilistic decay
+        __u32 random_value = bpf_get_prandom_u32(); // Use built-in bpf function to retrieve random value
+        if (decay(b->count, random_value))          // If decay returns 1 --> Proceed
         {
+            // Decrement counter
             if (b->count > 0)
                 b->count--;
 
-            // If counter decayed to 0, current flow claims the bucket
+            // If count hits 0:
+            // ¤ Evict old flow
+            // ¤ Arriving packet claims bucket
             if (b->count == 0)
             {
                 b->fp = fp;
@@ -296,7 +283,8 @@ int heavy_keeper(struct xdp_md *ctx)
     if (parse_packet(ctx, &unified_ip) <= 0)
         return XDP_PASS; // --> Exit Program Logic
 
-    // This function hashes the received IP address
+    // Hash IP, decay and add to corresponding bucket
+    update(&unified_ip);
 
     return XDP_PASS;
 }
