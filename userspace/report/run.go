@@ -34,6 +34,25 @@ const LiveTimingNote = "Packet timestamps are the kernel's receive times, and " 
 	"time per window. Detection latency from attack start is eval_end_ns of the " +
 	"first flagged window minus the attack start."
 
+// ResourceNote explains the resource columns of windows.csv.
+const ResourceNote = "heap_alloc_bytes, user_cpu_ns, sys_cpu_ns, cpu_interval_ns and " +
+	"cpu_share describe the detector process itself, sampled once per window " +
+	"right after the window is evaluated. The CPU columns cover the wall-clock " +
+	"interval since the previous sample (cpu_interval_ns) and are summed over " +
+	"all threads; cpu_share is (user + sys) / interval, where 1.0 is one core " +
+	"fully busy. In a live capture the interval is about one window length. In " +
+	"a trace replay the input is read as fast as possible, so cpu_share is " +
+	"close to 1 by construction; use (user_cpu_ns + sys_cpu_ns) / packets as " +
+	"the cost per packet instead. sys_cpu_ns is mostly the capture's system " +
+	"calls. On Linux the user/sys split has a resolution of one scheduler tick."
+
+// SentPacketsNote reminds that the number of packets sent is not recorded
+// by the detector.
+const SentPacketsNote = "The number of packets sent is not recorded here: the " +
+	"detector only sees what arrives. Save the tcpreplay output from the sender " +
+	"next to this run.json; together with live.socket and live.nic_delta it " +
+	"shows how many packets were lost before the detector and at which layer."
+
 // How a run ended.
 const (
 	EndSourceEnded     = "source_ended"

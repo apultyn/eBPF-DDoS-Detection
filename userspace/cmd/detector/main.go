@@ -23,6 +23,15 @@
 // Turn off receive offloads first so the kernel does not merge packets:
 //
 //	ethtool -K ens7 gro off lro off
+//
+// The number of packets sent is only known on the sender. Save the
+// tcpreplay output next to run.json, since it is needed to find the
+// capacity limit:
+//
+//	tcpreplay -i ens7 --pps 100000 attack.pcap 2>&1 | tee results/live1/tcpreplay.txt
+//
+// Every window row also carries the detector's own heap in use and the
+// user and system CPU time it spent since the previous window.
 package main
 
 import (
@@ -41,6 +50,7 @@ import (
 	"github.com/apultyn/eBPF-DDoS-Detection/userspace/detector"
 	"github.com/apultyn/eBPF-DDoS-Detection/userspace/iqr"
 	"github.com/apultyn/eBPF-DDoS-Detection/userspace/report"
+	"github.com/apultyn/eBPF-DDoS-Detection/userspace/resource"
 	"github.com/apultyn/eBPF-DDoS-Detection/userspace/window"
 )
 
@@ -187,6 +197,9 @@ type session struct {
 	drops     func() (uint64, bool)
 	lastDrops uint64
 
+	// resources samples the process's memory and CPU once per window.
+	resources *resource.Sampler
+
 	stop    atomic.Bool
 	started time.Time
 	next    time.Time
@@ -212,12 +225,19 @@ func newSession(opt options, wcfg window.Config, dcfg detector.Config) (*session
 		return nil, err
 	}
 
+	// The first window's figures run from here, after setup.
+	s.resources = resource.NewSampler()
+
 	return s, nil
 }
 
 // onClose evaluates a closed window and writes the result.
 func (s *session) onClose(c window.Closed) {
 	r := s.ev.Evaluate(c)
+
+	// Sampled after the evaluation, so a window's figures include the
+	// cost of judging it; writing the row falls to the next window.
+	r.Resources = s.resources.Sample()
 
 	if s.drops != nil {
 		if total, ok := s.drops(); ok {
@@ -374,7 +394,7 @@ func runTrace(opt options, wcfg window.Config, dcfg detector.Config) error {
 
 	info := s.runInfo("pcap", endReason, finished)
 	info.Inputs = src.Files()
-	info.Notes = []string{report.TraceTimingNote}
+	info.Notes = []string{report.TraceTimingNote, report.ResourceNote}
 
 	if err := report.WriteRun(opt.outDir, info, opt.force); err != nil {
 		return err
@@ -469,7 +489,7 @@ func runLive(opt options, wcfg window.Config, dcfg detector.Config) error {
 
 	run := s.runInfo("live", endReason, finished)
 	run.Live = info
-	run.Notes = []string{report.LiveTimingNote}
+	run.Notes = []string{report.LiveTimingNote, report.ResourceNote, report.SentPacketsNote}
 
 	if err := report.WriteRun(opt.outDir, run, opt.force); err != nil {
 		return err

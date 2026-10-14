@@ -15,6 +15,7 @@ import (
 
 	"github.com/apultyn/eBPF-DDoS-Detection/userspace/detector"
 	"github.com/apultyn/eBPF-DDoS-Detection/userspace/iqr"
+	"github.com/apultyn/eBPF-DDoS-Detection/userspace/resource"
 )
 
 // Output file names inside the output directory.
@@ -39,6 +40,7 @@ var windowColumns = []string{
 	"warm_up", "threshold", "quartile_bound", "threshold_term", "malicious",
 	"flagged_ips",
 	"closed_at_ns", "eval_start_ns", "eval_end_ns",
+	"heap_alloc_bytes", "user_cpu_ns", "sys_cpu_ns", "cpu_interval_ns", "cpu_share",
 }
 
 // ipColumns is the header of ips.csv. Rows join windows.csv on epoch.
@@ -141,6 +143,7 @@ func (s *CSVSink) Write(r *detector.WindowResult) error {
 	}
 
 	row = append(row, ns(r.ClosedAt), ns(r.EvalStart), ns(r.EvalEnd))
+	row = appendResources(row, r.Resources)
 	s.row = row
 
 	if err := s.windows.Write(row); err != nil {
@@ -217,6 +220,22 @@ func (s *CSVSink) Close() error {
 	s.files, s.bufs = nil, nil
 
 	return err
+}
+
+// appendResources adds the resource columns, leaving them empty when they
+// were not measured.
+func appendResources(row []string, s resource.Sample) []string {
+	if s.Interval <= 0 {
+		return append(row, "", "", "", "", "")
+	}
+
+	return append(row,
+		u(s.HeapAlloc),
+		strconv.FormatInt(int64(s.UserCPU), 10),
+		strconv.FormatInt(int64(s.SysCPU), 10),
+		strconv.FormatInt(int64(s.Interval), 10),
+		strconv.FormatFloat(s.CPUShare(), 'f', 4, 64),
+	)
 }
 
 // drops writes a kernel drop count, leaving the cell empty when it was not
