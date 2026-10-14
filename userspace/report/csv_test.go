@@ -11,6 +11,7 @@ import (
 	"github.com/apultyn/eBPF-DDoS-Detection/userspace/detector"
 	"github.com/apultyn/eBPF-DDoS-Detection/userspace/flow"
 	"github.com/apultyn/eBPF-DDoS-Detection/userspace/iqr"
+	"github.com/apultyn/eBPF-DDoS-Detection/userspace/resource"
 )
 
 func readCSV(t *testing.T, path string) []map[string]string {
@@ -69,6 +70,12 @@ func TestCSVSink(t *testing.T) {
 					Verdict: iqr.Verdict{Threshold: 200, WarmUp: true}},
 			},
 			ClosedAt: closed, EvalStart: closed.Add(1), EvalEnd: closed.Add(2),
+			Resources: resource.Sample{
+				HeapAlloc: 4 << 20,
+				UserCPU:   300 * time.Millisecond,
+				SysCPU:    100 * time.Millisecond,
+				Interval:  500 * time.Millisecond,
+			},
 		},
 	}
 
@@ -91,7 +98,7 @@ func TestCSVSink(t *testing.T) {
 
 	skipped := windows[0]
 	if skipped["evaluated"] != "false" || skipped["threshold"] != "" || skipped["malicious"] != "" ||
-		skipped["kernel_drops"] != "" {
+		skipped["kernel_drops"] != "" || skipped["cpu_share"] != "" || skipped["heap_alloc_bytes"] != "" {
 		t.Errorf("unevaluated window row = %v, want empty detection columns", skipped)
 	}
 
@@ -109,6 +116,11 @@ func TestCSVSink(t *testing.T) {
 		"malicious":         "false",
 		"flagged_ips":       "1",
 		"eval_end_ns":       "1800000000000000007",
+		"heap_alloc_bytes":  "4194304",
+		"user_cpu_ns":       "300000000",
+		"sys_cpu_ns":        "100000000",
+		"cpu_interval_ns":   "500000000",
+		"cpu_share":         "0.8000",
 	} {
 		if w[col] != want {
 			t.Errorf("windows.csv %s = %q, want %q", col, w[col], want)

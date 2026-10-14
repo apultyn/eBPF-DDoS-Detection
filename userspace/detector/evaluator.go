@@ -19,6 +19,7 @@ import (
 	"github.com/apultyn/eBPF-DDoS-Detection/userspace/epoch"
 	"github.com/apultyn/eBPF-DDoS-Detection/userspace/flow"
 	"github.com/apultyn/eBPF-DDoS-Detection/userspace/iqr"
+	"github.com/apultyn/eBPF-DDoS-Detection/userspace/resource"
 	"github.com/apultyn/eBPF-DDoS-Detection/userspace/window"
 )
 
@@ -124,6 +125,12 @@ type WindowResult struct {
 	ClosedAt  time.Time
 	EvalStart time.Time
 	EvalEnd   time.Time
+
+	// Resources is the detector process's own memory and CPU use over the
+	// interval since the previous window was evaluated, up to and
+	// including this window's evaluation. It is set by the caller; a zero
+	// Resources.Interval means it was not measured.
+	Resources resource.Sample
 }
 
 // Malicious reports whether the window or any candidate was flagged.
