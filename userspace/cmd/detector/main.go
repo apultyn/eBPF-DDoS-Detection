@@ -39,6 +39,7 @@ import (
 
 	"github.com/apultyn/eBPF-DDoS-Detection/userspace/capture"
 	"github.com/apultyn/eBPF-DDoS-Detection/userspace/detector"
+	"github.com/apultyn/eBPF-DDoS-Detection/userspace/iqr"
 	"github.com/apultyn/eBPF-DDoS-Detection/userspace/report"
 	"github.com/apultyn/eBPF-DDoS-Detection/userspace/window"
 )
@@ -85,6 +86,7 @@ func run() error {
 		opt    options
 		counts string
 		mode   string
+		ipMode string
 	)
 
 	flag.Var(&opt.inputs, "pcap", "trace file or directory of trace files; may be repeated")
@@ -116,6 +118,10 @@ func run() error {
 	flag.IntVar(&dcfg.IQR.MinSamples, "min-samples", dcfg.IQR.MinSamples, "samples needed before a threshold is enforced")
 	flag.IntVar(&dcfg.IQR.MaxHistorySize, "history", dcfg.IQR.MaxHistorySize, "samples kept per history")
 	flag.IntVar(&dcfg.IQR.MaxTrackedIPs, "max-ips", dcfg.IQR.MaxTrackedIPs, "source addresses with a per-IP history")
+	flag.StringVar(&ipMode, "ip-mode", dcfg.IQR.IPMode.String(),
+		"history a source is judged against: per-ip, shared, or hybrid (own once warmed up, shared until then)")
+	flag.IntVar(&dcfg.IQR.MaxSharedHistorySize, "shared-history", dcfg.IQR.MaxSharedHistorySize,
+		"samples kept in the history shared by all sources (shared and hybrid modes)")
 
 	flag.Parse()
 
@@ -145,6 +151,10 @@ func run() error {
 	}
 
 	if dcfg.Mode, err = detector.ParseMode(mode); err != nil {
+		return err
+	}
+
+	if dcfg.IQR.IPMode, err = iqr.ParseIPMode(ipMode); err != nil {
 		return err
 	}
 
@@ -528,6 +538,9 @@ func runConfig(w window.Config, d detector.Config) report.Config {
 		MinSamples:       d.IQR.MinSamples,
 		MaxHistorySize:   d.IQR.MaxHistorySize,
 		MaxTrackedIPs:    d.IQR.MaxTrackedIPs,
+
+		IPMode:               d.IQR.IPMode.String(),
+		MaxSharedHistorySize: d.IQR.MaxSharedHistorySize,
 	}
 }
 
@@ -565,7 +578,8 @@ func printSummary(r *report.Run) {
 
 	log.Printf("  windows:  %d closed, %d empty, %d evaluated, %d flagged", s.Window.Closed, s.Window.Empty, s.EvaluatedWindows, s.FlaggedWindows)
 	log.Printf("  pauses:   %d jumps over %d epochs", s.Window.Jumps, s.Window.SkippedEpochs)
-	log.Printf("  sources:  %d flagged IP rows, %d tracked, %d evicted", s.FlaggedIPRows, s.TrackedIPs, s.EvictedIPs)
+	log.Printf("  sources:  %d flagged IP rows, %d tracked, %d evicted (ip mode %s)",
+		s.FlaggedIPRows, s.TrackedIPs, s.EvictedIPs, r.Config.IPMode)
 
 	if s.Window.Late > 0 {
 		log.Printf("warning: %d out-of-order packets were dropped; the input is not in time order", s.Window.Late)

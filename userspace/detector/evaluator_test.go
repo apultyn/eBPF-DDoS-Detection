@@ -199,16 +199,9 @@ func TestNewEvaluator_RejectsUnknownMode(t *testing.T) {
 	}
 }
 
-// A source never seen before cannot be flagged per IP while its history
-// is in warm-up, and its history only fills in windows that were not
-// flagged. While an attack keeps every window flagged, a new source
-// therefore stays in warm-up and only the window-level verdict reports
-// the attack. This test pins that behaviour down so a change to it is
-// deliberate.
-func TestEvaluate_NewSourceStaysInWarmUpDuringFlaggedWindows(t *testing.T) {
-	dcfg := DefaultConfig()
-	dcfg.IQR.MinSamples = 2
-
+// newSourceAttack is normal traffic from A, after which B appears with a
+// flood that keeps every window from 11 to 19 flagged.
+func newSourceAttack() []capture.Packet {
 	var packets []capture.Packet
 
 	// Normal traffic from A to get the window threshold past warm-up.
@@ -222,9 +215,21 @@ func TestEvaluate_NewSourceStaysInWarmUpDuringFlaggedWindows(t *testing.T) {
 		packets = append(packets, burst(n, ipB, 5000)...)
 	}
 
-	packets = append(packets, burst(20, ipA, 1)...)
+	return append(packets, burst(20, ipA, 1)...)
+}
 
-	results := run(t, window.DefaultConfig(), dcfg, packets)
+// In per-IP mode a source never seen before cannot be flagged per IP
+// while its history is in warm-up, and its history only fills in windows
+// that were not flagged. While an attack keeps every window flagged, a
+// new source therefore stays in warm-up and only the window-level verdict
+// reports the attack. This test pins that behaviour down so a change to
+// it is deliberate; the hybrid mode below exists to avoid it.
+func TestEvaluate_NewSourceStaysInWarmUpDuringFlaggedWindows(t *testing.T) {
+	dcfg := DefaultConfig()
+	dcfg.IQR.MinSamples = 2
+	dcfg.IQR.IPMode = iqr.IPModePerIP
+
+	results := run(t, window.DefaultConfig(), dcfg, newSourceAttack())
 
 	for _, r := range results[11:20] {
 		if !r.Verdict.IsMalicious {
@@ -235,6 +240,46 @@ func TestEvaluate_NewSourceStaysInWarmUpDuringFlaggedWindows(t *testing.T) {
 			if ip.IP == ipB && (!ip.Verdict.WarmUp || ip.Verdict.IsMalicious) {
 				t.Errorf("window %d: new source left warm-up during the attack: %+v", r.Epoch, ip.Verdict)
 			}
+		}
+	}
+}
+
+// In hybrid mode, the default, the same new source is judged against the
+// history shared by all sources and flagged in every attack window, while
+// the known source A is judged against its own history and never flagged.
+func TestEvaluate_HybridFlagsNewSourceDuringFlaggedWindows(t *testing.T) {
+	dcfg := DefaultConfig()
+	dcfg.IQR.MinSamples = 2
+
+	if dcfg.IQR.IPMode != iqr.IPModeHybrid {
+		t.Fatalf("default IP mode = %v, want hybrid", dcfg.IQR.IPMode)
+	}
+
+	results := run(t, window.DefaultConfig(), dcfg, newSourceAttack())
+
+	for _, r := range results[11:20] {
+		if !r.Verdict.IsMalicious {
+			t.Fatalf("window %d was not flagged; the scenario needs every attack window flagged", r.Epoch)
+		}
+
+		seen := false
+
+		for _, ip := range r.IPs {
+			switch ip.IP {
+			case ipB:
+				seen = true
+				if ip.Verdict.WarmUp || !ip.Verdict.Shared || !ip.Verdict.IsMalicious {
+					t.Errorf("window %d: new source %+v, want flagged against the shared history", r.Epoch, ip.Verdict)
+				}
+			case ipA:
+				if ip.Verdict.Shared || ip.Verdict.IsMalicious {
+					t.Errorf("window %d: known source %+v, want judged on its own history and not flagged", r.Epoch, ip.Verdict)
+				}
+			}
+		}
+
+		if !seen {
+			t.Errorf("window %d: the new source was not a candidate", r.Epoch)
 		}
 	}
 }

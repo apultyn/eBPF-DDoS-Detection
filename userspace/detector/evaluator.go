@@ -233,6 +233,7 @@ func (e *Evaluator) Evaluate(c window.Closed) WindowResult {
 
 	candidates := w.Candidates()
 	r.IPs = make([]IPResult, 0, len(candidates))
+	counts := make([]iqr.IPCount, 0, len(candidates))
 
 	for _, cand := range candidates {
 		ip := IPResult{
@@ -245,9 +246,16 @@ func (e *Evaluator) Evaluate(c window.Closed) WindowResult {
 		}
 
 		ip.Evaluated = ip.Current + ip.Previous
-		ip.Verdict = e.detector.EvaluateIP(cand.Item, ip.Evaluated, r.Verdict.IsMalicious)
 
 		r.IPs = append(r.IPs, ip)
+		counts = append(counts, iqr.IPCount{IP: ip.IP, Count: ip.Evaluated})
+	}
+
+	// All candidates are judged in one call, so that they are compared
+	// against the same shared history and the window is learned from
+	// only once every candidate has been judged.
+	for i, v := range e.detector.EvaluateIPs(counts, r.Verdict.IsMalicious) {
+		r.IPs[i].Verdict = v
 	}
 
 	r.EvalEnd = e.now()

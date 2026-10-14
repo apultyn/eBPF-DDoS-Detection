@@ -42,10 +42,13 @@ var windowColumns = []string{
 }
 
 // ipColumns is the header of ips.csv. Rows join windows.csv on epoch.
+// threshold_source is last so that the columns before it keep the
+// positions they had before it was added.
 var ipColumns = []string{
 	"epoch", "ip",
 	"current", "previous", "evaluated",
 	"warm_up", "threshold", "quartile_bound", "threshold_term", "malicious",
+	"threshold_source",
 }
 
 // CSVSink writes windows.csv and ips.csv.
@@ -151,6 +154,7 @@ func (s *CSVSink) Write(r *detector.WindowResult) error {
 			u(ip.Current), u(ip.Previous), u(ip.Evaluated),
 		)
 		row = appendVerdict(row, ip.Verdict)
+		row = append(row, thresholdSource(ip.Verdict))
 
 		if err := s.ips.Write(row); err != nil {
 			return err
@@ -160,6 +164,17 @@ func (s *CSVSink) Write(r *detector.WindowResult) error {
 	s.row = row
 
 	return nil
+}
+
+// thresholdSource names the history an IP verdict came from: the
+// source's own, or the one shared by all sources. During warm-up it is
+// the history that was still filling.
+func thresholdSource(v iqr.Verdict) string {
+	if v.Shared {
+		return "shared"
+	}
+
+	return "own"
 }
 
 // appendVerdict adds warm_up, threshold, quartile_bound, threshold_term
