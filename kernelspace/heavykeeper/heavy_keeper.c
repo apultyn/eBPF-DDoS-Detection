@@ -46,8 +46,8 @@
 #define FINGERPRINT_SEED 0x75a2e345
 
 // ¤ HeavyKeeper Tuning Parameters
-#define DEPTH 3
-#define WIDTH 65536
+#define DEPTH 4
+#define WIDTH 1024
 #define MASK (WIDTH - 1)
 #define TOTAL_BUCKETS (DEPTH * WIDTH)
 #define DECAY_THRESHOLD 64
