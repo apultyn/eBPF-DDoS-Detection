@@ -11,7 +11,7 @@
 // 2.  Attach to Network Interface: sudo ip link set dev enp3s0 xdpgeneric obj heavy_keeper.o sec xdp
 // 3.  Show Attached Links: ip link show
 // 4.  Expose Filepath for Userspace Programs: sudo bpftool map pin name data_sketch_map /sys/fs/bpf/heavy_keeper_map
-// 5.  Expose Filepath for Userspace Programs: sudo bpftool map pin name data_sketch_map /sys/fs/bpf/blocklist_map 
+// 5.  Expose Filepath for Userspace Programs: sudo bpftool map pin name blocklist_map /sys/fs/bpf/blocklist_map 
 // 6.  Read From Debug Tracepipe: sudo cat /sys/kernel/debug/tracing/trace_pipe
 // 7.  List all buckets with count < 0: sudo bpftool map dump pinned /sys/fs/bpf/heavy_keeper_map | awk -v RS='}' '/"count": [1-9]/ { print $0 "}" }'
 // 8.  Detatch from Network Interface: sudo ip link set dev enp3s0 xdpgeneric off
@@ -306,7 +306,7 @@ int heavy_keeper(struct xdp_md *ctx)
     if (parse_packet(ctx, &unified_ip) <= 0)
         return XDP_PASS; // --> Exit Program Logic
 
-    __u8 *blocked = bpf_map_lookup_elem(&blocklist_map, &src_ip);
+    __u8 *blocked = bpf_map_lookup_elem(&blocklist_map, &unified_ip);
     if (blocked) {
         return XDP_DROP;
     }
