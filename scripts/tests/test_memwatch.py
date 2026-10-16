@@ -39,6 +39,21 @@ slab_reclaimable 100000
 slab_unreclaimable 200000
 """
 
+# Two /proc/stat snapshots of a two-core machine, as in the Go tests:
+# columns are user nice system idle iowait irq softirq steal guest
+# guest_nice, in 10 ms ticks. Between them cpu0 is busy for 90 of 100
+# ticks, 50 of them in softirq, and cpu1 for 10; guest is already in user.
+PROC_STAT_BEFORE = """cpu  2000 0 1000 50000 100 0 500 0 900 0
+cpu0 1000 0 500 25000 50 0 400 0 900 0
+cpu1 1000 0 500 25000 50 0 100 0 0 0
+intr 123456 0 0
+"""
+PROC_STAT_AFTER = """cpu  2040 0 1010 50100 100 0 550 0 950 0
+cpu0 1030 0 510 25010 50 0 450 0 950 0
+cpu1 1010 0 500 25090 50 0 100 0 0 0
+intr 123999 0 0
+"""
+
 
 def make_exe(path: Path, body: str) -> str:
     path.write_text(f"#!{sys.executable}\n" + textwrap.dedent(body))
@@ -76,11 +91,15 @@ def fake(tmp_path, monkeypatch):
         print(json.dumps([{"id": 7, "type": "array" if kind == "map" else "xdp"}]))
     """)
 
+    proc_stat = tmp_path / "stat"
+    proc_stat.write_text(PROC_STAT_BEFORE)
+
     monkeypatch.setenv("FAKE_CGROUP", "/system.slice/fake.scope")
     monkeypatch.setenv("CG", str(cg))
+    monkeypatch.setenv("PROC_STAT", str(proc_stat))
 
     env = memwatch.Env(cgroup_root=root, mounts=mounts, systemd_run=run, systemctl=ctl,
-                       bpftool=bpf, is_root=lambda: True, log=lambda m: None)
+                       bpftool=bpf, proc_stat=proc_stat, is_root=lambda: True, log=lambda m: None)
 
     return {"env": env, "cg": cg, "root": root, "out": tmp_path / "out", "tmp": tmp_path}
 
@@ -321,3 +340,94 @@ def test_ctrl_c_is_forwarded_once(fake):
     s = json.loads((fake["out"] / "memory_summary.json").read_text())
     assert s["signals_forwarded"] == ["SIGINT"]
     assert s["exit_code"] == 0
+
+
+# ------------------------------------------------------------ cpu
+
+
+def test_parse_proc_stat():
+    t = memwatch.parse_proc_stat(PROC_STAT_BEFORE)
+
+    assert t.all == [2000, 0, 1000, 50000, 100, 0, 500, 0]
+    assert sorted(t.cores) == [0, 1] and t.cores[0][6] == 400
+
+    # Missing trailing columns read as zero.
+    assert memwatch.parse_proc_stat("cpu 1 2 3 4 5\n").all == [1, 2, 3, 4, 5, 0, 0, 0]
+
+    for bad in ("intr 1 2\n", "cpu 1 2 3\n", "cpu 1 x 3 4\n"):
+        with pytest.raises(ValueError):
+            memwatch.parse_proc_stat(bad)
+
+
+def test_cpu_sample():
+    c = memwatch.cpu_sample(memwatch.parse_proc_stat(PROC_STAT_AFTER),
+                            memwatch.parse_proc_stat(PROC_STAT_BEFORE), ts_ns=7)
+
+    assert (c.busy, c.total, c.softirq) == (10**9, 2 * 10**9, 5 * 10**8)
+    assert c.max_core_share == 0.9
+    assert c.row() == [7, 10**9, 2 * 10**9, 5 * 10**8, "0.9000"]
+
+
+def test_cpu_sample_counter_going_backwards_and_cores_coming_and_going():
+    before = memwatch.parse_proc_stat("cpu 100 0 0 1000 50\ncpu0 100 0 0 1000 50\ncpu1 0 0 0 0 0\n")
+    after = memwatch.parse_proc_stat("cpu 150 0 0 1050 30\ncpu0 150 0 0 1050 30\ncpu2 9 0 0 0 0\n")
+
+    c = memwatch.cpu_sample(after, before, ts_ns=0)
+
+    # iowait fell by 20 ticks and counts as zero; only cpu0 is at both ends.
+    assert (c.busy, c.total) == (5 * 10**8, 10**9)
+    assert c.max_core_share == 0.5
+
+
+# Advances the fake /proc/stat three times, by the same step as from
+# PROC_STAT_BEFORE to PROC_STAT_AFTER, and exits.
+ADVANCING = """
+import os, time
+step = [[40, 0, 10, 100, 0, 0, 50, 0], [30, 0, 10, 10, 0, 0, 50, 0], [10, 0, 0, 90, 0, 0, 0, 0]]
+base = [[2000, 0, 1000, 50000, 100, 0, 500, 0], [1000, 0, 500, 25000, 50, 0, 400, 0],
+        [1000, 0, 500, 25000, 50, 0, 100, 0]]
+for i in range(1, 4):
+    lines = [name + " " + " ".join(str(b + i * s) for b, s in zip(base[n], step[n]))
+             for n, name in enumerate(["cpu", "cpu0", "cpu1"])]
+    tmp = os.environ["PROC_STAT"] + ".tmp"
+    open(tmp, "w").write("\\n".join(lines) + "\\n")
+    os.replace(tmp, os.environ["PROC_STAT"])
+    time.sleep(0.12)
+"""
+
+
+def test_cpu_logs_machine_use(fake):
+    assert run_memwatch(fake, sys.executable, "-c", ADVANCING, extra=["--cpu"]) == 0
+
+    rows = read_csv(fake["out"] / "cpu.csv")
+    assert list(rows[0]) == memwatch.CPU_CSV_COLUMNS
+    assert len(rows) >= 3
+
+    # The samples together cover the three steps, however they fell
+    # between the reads.
+    assert sum(int(r["host_busy_ns"]) for r in rows) == 3 * 10**9
+    assert sum(int(r["host_total_ns"]) for r in rows) == 6 * 10**9
+    assert max(float(r["host_max_core_share"] or 0) for r in rows) == 0.9
+
+    c = json.loads((fake["out"] / "memory_summary.json").read_text())["cpu"]
+    assert c["samples"] == len(rows)
+    assert c["busy_share"] == 0.5 and c["softirq_share"] == 0.25
+    assert c["max_core_share_max"] == 0.9
+
+
+def test_cpu_not_logged_without_flag(fake):
+    assert run_memwatch(fake, sys.executable, "-c", "pass") == 0
+
+    assert not (fake["out"] / "cpu.csv").exists()
+    assert "cpu" not in json.loads((fake["out"] / "memory_summary.json").read_text())
+
+
+def test_unreadable_proc_stat_warns_and_continues(fake):
+    fake["env"].proc_stat = fake["tmp"] / "missing"
+
+    assert run_memwatch(fake, sys.executable, "-c", "pass", extra=["--cpu"]) == 0
+
+    s = json.loads((fake["out"] / "memory_summary.json").read_text())
+    assert any("CPU use is not recorded" in w for w in s["warnings"])
+    assert "cpu" not in s
+    assert not (fake["out"] / "cpu.csv").exists()

@@ -2,7 +2,7 @@
 """Run a command in its own cgroup and log its memory use.
 
     sudo python3 scripts/memwatch.py --out results/run1 [--interval 0.5] \\
-        [--bpftool] -- ./detector -iface eth0 -out results/run1
+        [--bpftool] [--cpu] -- ./detector -iface eth0 -out results/run1
 
 The command is started with systemd-run --scope, so it gets a cgroup of its
 own while this script stays outside it and its own memory is not counted.
@@ -16,6 +16,12 @@ including kernel_stack, pagetables, percpu, vmalloc and slab, and "sock" is
 network transmission buffers, which kernel does not include, so nothing is
 counted twice. "file" (page cache) is logged but not part of main.
 
+With --cpu, the CPU use of the whole machine is read from /proc/stat at
+every sample and appended to <out>/cpu.csv, with the same columns as the
+host columns of the detector's windows.csv. Run with a command that does
+nothing, such as sleep, it gives the baseline the detectors are compared
+against: the same traffic with no detector.
+
 Ctrl-C is forwarded to the command as a single SIGINT, so it can shut down
 cleanly; the script then records the final readings and exits with the
 command's exit code. Linux only; standard library only.
@@ -24,6 +30,7 @@ command's exit code. Linux only; standard library only.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import csv
 import json
 import os
@@ -49,8 +56,11 @@ CSV_COLUMNS = ["ts_ns", "current"] + STAT_FIELDS + ["main"]
 # vmalloc, kernel_stack and pagetables.
 MAIN_FIELDS = ("anon", "kernel", "sock")
 
+CPU_CSV_COLUMNS = ["ts_ns", "host_busy_ns", "host_total_ns", "host_softirq_ns",
+                   "host_max_core_share"]
+
 OUTPUT_FILES = ("memory.csv", "memory.stat.final", "memory_summary.json",
-                "bpf_maps.json", "bpf_progs.json")
+                "bpf_maps.json", "bpf_progs.json", "cpu.csv")
 
 
 class MemwatchError(Exception):
@@ -66,6 +76,7 @@ class Env:
     systemd_run: str = "systemd-run"
     systemctl: str = "systemctl"
     bpftool: str = "bpftool"
+    proc_stat: Path = Path("/proc/stat")
     is_root: Callable[[], bool] = field(default=lambda: os.geteuid() == 0)
     now_ns: Callable[[], int] = time.time_ns
     log: Callable[[str], None] = field(default=lambda m: print(f"memwatch: {m}", file=sys.stderr, flush=True))
@@ -231,6 +242,117 @@ def bpftool_snapshot(env: Env) -> dict:
     return snap
 
 
+# ---------------------------------------------------------------- cpu
+
+# /proc/stat counts CPU time in USER_HZ ticks, which Linux fixes at 100 per
+# second for user space, so the resolution is 10 ms per core.
+TICK_NS = 10_000_000
+
+# The columns of a cpu line that are read: user nice system idle iowait
+# irq softirq steal. guest and guest_nice follow but are already counted
+# in user and nice.
+CPU_COLUMNS = 8
+BUSY_COLUMNS = (0, 1, 2, 5, 6, 7)
+IDLE_COLUMNS = (3, 4)
+SOFTIRQ_COLUMN = 6
+
+
+@dataclass
+class CPUTimes:
+    """A /proc/stat snapshot: the machine as a whole and each online core."""
+
+    all: list[int]
+    cores: dict[int, list[int]]
+
+
+def parse_proc_stat(text: str) -> CPUTimes:
+    """Parse the cpu lines of /proc/stat. Raises ValueError if malformed."""
+    whole = None
+    cores = {}
+
+    for line in text.splitlines():
+        parts = line.split()
+        if not parts or not parts[0].startswith("cpu"):
+            continue
+        if len(parts) < 5:
+            raise ValueError(f"short /proc/stat line {line!r}")
+
+        # A kernel older than 2.6.11 stops after iowait; the rest is zero.
+        ticks = [int(v) for v in parts[1:1 + CPU_COLUMNS]]
+        ticks += [0] * (CPU_COLUMNS - len(ticks))
+
+        if parts[0] == "cpu":
+            whole = ticks
+        else:
+            cores[int(parts[0][3:])] = ticks
+
+    if whole is None:
+        raise ValueError("no cpu line in /proc/stat")
+
+    return CPUTimes(whole, cores)
+
+
+def read_proc_stat(env: Env) -> CPUTimes | None:
+    try:
+        return parse_proc_stat(env.proc_stat.read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def cpu_delta(cur: list[int], prev: list[int]) -> tuple[int, int, int]:
+    """Busy, total and softirq ns between two cpu lines. A column that went
+    backwards counts as zero: iowait is known to do so on some kernels."""
+    d = [max(c - p, 0) * TICK_NS for c, p in zip(cur, prev)]
+    busy = sum(d[i] for i in BUSY_COLUMNS)
+    return busy, busy + sum(d[i] for i in IDLE_COLUMNS), d[SOFTIRQ_COLUMN]
+
+
+@dataclass
+class CPUSample:
+    ts_ns: int
+    busy: int
+    total: int
+    softirq: int
+    max_core_share: float | None
+
+    def row(self) -> list:
+        share = "" if self.max_core_share is None else f"{self.max_core_share:.4f}"
+        return [self.ts_ns, self.busy, self.total, self.softirq, share]
+
+
+def cpu_sample(cur: CPUTimes, prev: CPUTimes, ts_ns: int) -> CPUSample:
+    """The machine's CPU use between two snapshots. Only cores present in
+    both count toward the busiest core."""
+    busy, total, softirq = cpu_delta(cur.all, prev.all)
+
+    shares = []
+    for core, ticks in cur.cores.items():
+        if core in prev.cores:
+            b, t, _ = cpu_delta(ticks, prev.cores[core])
+            if t > 0:
+                shares.append(b / t)
+
+    return CPUSample(ts_ns, busy, total, softirq, max(shares) if shares else None)
+
+
+def summarize_cpu(samples: list[CPUSample]) -> dict:
+    busy = sum(s.busy for s in samples)
+    total = sum(s.total for s in samples)
+    softirq = sum(s.softirq for s in samples)
+    cores = [s.max_core_share for s in samples if s.max_core_share is not None]
+
+    return {
+        "samples": len(samples),
+        "busy_ns": busy,
+        "total_ns": total,
+        "softirq_ns": softirq,
+        "busy_share": busy / total if total else None,
+        "softirq_share": softirq / total if total else None,
+        "max_core_share_median": statistics.median(cores) if cores else None,
+        "max_core_share_max": max(cores) if cores else None,
+    }
+
+
 # ---------------------------------------------------------------- run
 
 
@@ -254,6 +376,13 @@ def run(args: argparse.Namespace, env: Env) -> int:
             use_bpftool = True
         else:
             warnings.append(f"{env.bpftool} not found; BPF maps and programs are not recorded")
+            env.log("warning: " + warnings[-1])
+
+    cpu_start = None
+    if args.cpu:
+        cpu_start = read_proc_stat(env)
+        if cpu_start is None:
+            warnings.append(f"{env.proc_stat} could not be read; CPU use is not recorded")
             env.log("warning: " + warnings[-1])
 
     unit = unit_name()
@@ -290,7 +419,7 @@ def run(args: argparse.Namespace, env: Env) -> int:
             raise
 
         env.log(f"watching {unit}.scope at {cgroup}")
-        samples, last, bpf = poll(cgroup, child, args, env, use_bpftool)
+        samples, last, bpf, cpu = poll(cgroup, child, args, env, use_bpftool, cpu_start)
     finally:
         for s, h in old.items():
             signal.signal(s, h)
@@ -317,29 +446,44 @@ def run(args: argparse.Namespace, env: Env) -> int:
         final_source=final_source, returncode=returncode, started_ns=started_ns,
         finished_ns=finished_ns, forwarded=forwarded, warnings=warnings,
     )
+    if cpu_start is not None:
+        summary["cpu"] = summarize_cpu(cpu)
     (out / "memory_summary.json").write_text(json.dumps(summary, indent=2) + "\n")
 
     env.log(f"{summary['samples']} samples; main max {fmt_bytes(summary['main_max'])}, "
             f"median {fmt_bytes(summary['main_median'])}; peak {fmt_bytes(summary['peak'])}; "
             f"command exited with {returncode}")
+    if summary.get("cpu", {}).get("busy_share") is not None:
+        c = summary["cpu"]
+        env.log(f"machine CPU busy {c['busy_share']:.1%}, "
+                f"busiest core median {c['max_core_share_median'] or 0:.1%}")
 
     return returncode
 
 
-def poll(cgroup: Path, child: subprocess.Popen, args, env: Env, use_bpftool: bool):
+def poll(cgroup: Path, child: subprocess.Popen, args, env: Env, use_bpftool: bool,
+         cpu_prev: CPUTimes | None):
     """Sample until the command exits. Returns main values, the last
-    sample, and the bpftool snapshots taken so far."""
+    sample, the bpftool snapshots taken so far, and the CPU samples, which
+    are taken only if cpu_prev, the snapshot they start from, is given."""
     mains: list[int | None] = []
     currents: list[int | None] = []
     last: Sample | None = None
     bpf: dict = {}
+    cpu: list[CPUSample] = []
 
     start = time.monotonic()
     tick = 0
 
-    with open(args.out / "memory.csv", "w", newline="") as f:
+    with contextlib.ExitStack() as files:
+        f = files.enter_context(open(args.out / "memory.csv", "w", newline=""))
         w = csv.writer(f)
         w.writerow(CSV_COLUMNS)
+
+        if cpu_prev is not None:
+            cf = files.enter_context(open(args.out / "cpu.csv", "w", newline=""))
+            cw = csv.writer(cf)
+            cw.writerow(CPU_CSV_COLUMNS)
 
         while True:
             s = read_sample(cgroup, env.now_ns())
@@ -349,6 +493,15 @@ def poll(cgroup: Path, child: subprocess.Popen, args, env: Env, use_bpftool: boo
                 mains.append(s.main)
                 currents.append(s.current)
                 last = s
+
+            if cpu_prev is not None:
+                cur = read_proc_stat(env)
+                if cur is not None:
+                    c = cpu_sample(cur, cpu_prev, env.now_ns())
+                    cw.writerow(c.row())
+                    cf.flush()
+                    cpu.append(c)
+                    cpu_prev = cur
 
             if use_bpftool and "during" not in bpf and time.monotonic() - start >= args.bpftool_after:
                 bpf["during"] = bpftool_snapshot(env)
@@ -365,7 +518,7 @@ def poll(cgroup: Path, child: subprocess.Popen, args, env: Env, use_bpftool: boo
                 except subprocess.TimeoutExpired:
                     pass
 
-    return {"main": mains, "current": currents}, last, bpf
+    return {"main": mains, "current": currents}, last, bpf, cpu
 
 
 def write_bpf(out: Path, bpf: dict) -> None:
@@ -416,7 +569,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         prog="memwatch.py",
         description="Run a command in its own cgroup and log its memory use.",
-        usage="sudo python3 scripts/memwatch.py --out DIR [--interval S] [--bpftool] -- COMMAND ...",
+        usage="sudo python3 scripts/memwatch.py --out DIR [--interval S] [--bpftool] [--cpu] -- COMMAND ...",
     )
     p.add_argument("--out", required=True, type=Path, help="directory for memory.csv and the summary")
     p.add_argument("--interval", type=float, default=0.5, help="seconds between samples (default 0.5)")
@@ -424,6 +577,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
                    help="also record bpftool map and prog listings, during the run and at the end")
     p.add_argument("--bpftool-after", type=float, default=5.0,
                    help="seconds into the run for the first bpftool snapshot (default 5)")
+    p.add_argument("--cpu", action="store_true",
+                   help="also log the whole machine's CPU use from /proc/stat to cpu.csv")
     p.add_argument("--force", action="store_true", help="overwrite memwatch files in --out")
     p.add_argument("command", nargs=argparse.REMAINDER, help="command to run, after --")
 

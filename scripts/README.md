@@ -28,15 +28,21 @@ sudo python3 scripts/memwatch.py --out results/run1 -- \
     ./detector -pcap PCAP-03-11/ -out results/run1
 ```
 
-With the XDP version, record the BPF maps and programs too:
+With the XDP version, attach the program first, then measure the detector
+and record the BPF maps and programs too:
 
 ```bash
+sudo ip link set dev ens7 xdpgeneric obj heavy_keeper.o sec xdp
 sudo python3 scripts/memwatch.py --out results/xdp1 --bpftool -- \
-    ./xdp-loader ...
+    ./detector -iface ens7 -duration 5m -out results/xdp1
 ```
+
+The maps are not in memwatch's `main` for this run; see
+[BPF maps](#bpf-maps) for what to report.
 
 Options: `--interval` (seconds between samples, default 0.5),
 `--bpftool-after` (when the first bpftool snapshot is taken, default 5 s),
+`--cpu` (also log the whole machine's CPU use, see below),
 `--force` (overwrite memwatch's own files in `--out`).
 
 Ctrl-C is forwarded to the command once, as SIGINT. The detector then stops
@@ -55,9 +61,12 @@ no cgroup v2, ...) exit with code 2 before the command is started.
 | `memory.stat.final` | the whole `memory.stat` at the end |
 | `memory_summary.json` | unit and cgroup path, kernel version, interval, number of samples, max and median of `main`, max of `current`, `memory.peak`, exit code, forwarded signals, warnings |
 | `bpf_maps.json`, `bpf_progs.json` | with `--bpftool`: `bpftool -j map show` / `prog show`, during the run and at the end |
+| `cpu.csv` | with `--cpu`: one row per sample: `ts_ns`, `host_busy_ns`, `host_total_ns`, `host_softirq_ns`, `host_max_core_share` |
 
-All values are bytes. A field missing from `memory.stat` gives an empty cell,
-not 0.
+Memory values are bytes. A field missing from `memory.stat` gives an empty
+cell, not 0. With `--cpu`, `memory_summary.json` also has a `cpu` section:
+busy, total and softirq time over the run, `busy_share` and `softirq_share`
+(of all cores), and the median and max of `host_max_core_share`.
 
 ### What to report: `main = anon + kernel + sock`
 
@@ -83,12 +92,26 @@ before the end.
 
 ### BPF maps
 
-BPF maps are charged to the cgroup of the process that creates them. The XDP
-loader must therefore be started through memwatch and stay alive for the
-whole run; maps created by a loader that exits, or by another tool, are not
-counted. Pinned maps outlive their creator and are still charged to the
-cgroup that created them. Use `--bpftool` to see which maps existed and
-their sizes.
+BPF maps are charged to the cgroup of the process that creates them. The
+kernel-space detector only opens maps that `ip link` created and pinned
+when it attached `heavy_keeper.o`, so they are charged to the shell that ran
+`ip link`, not to the detector's cgroup, and memwatch's `main` does not
+include them. Pinned maps outlive their creator and stay charged to it.
+
+The detector therefore records the maps' memory itself, in `bpf_memory` in
+its run.json: per map and in total (`total_bytes`), as the kernel reports
+it (memlock in the map's fdinfo, the same figure as `bytes_memlock` in
+`bpftool map show`). The maps are preallocated, so the figure does not
+depend on the traffic; it is read at the start and the end, and a warning
+is recorded if the two differ. For the kernel-space detector report
+
+    main (memory_summary.json) + bpf_memory.total_bytes (run.json)
+
+Nothing is counted twice. The per-CPU maps (`slot_stats`, `blocked_stats`,
+`blocklist_map`) grow with the number of possible CPUs, so the total
+differs between the Pi and FABRIC. The program's own instructions and JIT
+image are not included; `--bpftool` records them (`bytes_xlated`,
+`bytes_jited`) if needed.
 
 ### Open question: is the AF_PACKET receive buffer in `sock`?
 
@@ -102,6 +125,31 @@ are counted in `sock`. To test it:
 3. If `sock` in `memory.csv` grows to the order of the buffer while drops
    occur, the buffer is counted. If it stays flat, report the granted buffer
    (`live.socket.recv_buffer_bytes` in run.json) separately alongside `main`.
+
+### CPU use of the whole machine (`--cpu`) and baselines
+
+Both detectors already write the machine's CPU use into every row of their
+`windows.csv` (`host_*` columns, read from `/proc/stat`; see the
+`HostCPUNote` in run.json). That includes the kernel's packet processing,
+where XDP runs, but also everything that would happen without a detector.
+`--cpu` measures the same columns without a detector, for the baseline:
+
+```bash
+# On the detector machine, while the sender replays the same traffic:
+sudo python3 scripts/memwatch.py --cpu --out results/base1 -- sleep 300
+```
+
+The cost of a detector is its `host_busy_ns` minus the baseline's at the
+same packet rate. An idle baseline (no traffic) shows the machine's
+background load. The sender should run on another machine, or its own CPU
+use ends up in every figure.
+
+`host_total_ns` is all CPU time over the interval summed over the cores, so
+`host_busy_ns / host_total_ns` is the share of the whole machine in use, and
+`host_softirq_ns` the part of it in softirq. `host_max_core_share` is the
+busy share of the busiest core; packets are processed on the cores that
+receive them, so one core can saturate while the machine average is low.
+`/proc/stat` counts in 10 ms ticks per core.
 
 ### Joining with the detector's output
 
@@ -125,12 +173,12 @@ bpftool version
 python3 -m pytest scripts
 ```
 
-The tests replace the cgroup root, `/proc/self/mounts`, `systemd-run`,
+The tests replace the cgroup root, `/proc/self/mounts`, `/proc/stat`, `systemd-run`,
 `systemctl` and `bpftool` with fakes, so they run without root and on macOS.
 They cover parsing of `memory.stat`, the `main` sum, empty fields, the
 preconditions, exit codes (including death by signal), forwarding of Ctrl-C
-exactly once, the fallback when the cgroup is gone, bpftool snapshots and
-the summary.
+exactly once, the fallback when the cgroup is gone, bpftool snapshots,
+parsing of `/proc/stat` and the CPU columns, and the summary.
 
 Only a real Linux system can show:
 

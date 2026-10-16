@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"io"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -14,7 +13,7 @@ import (
 
 // openKernel opens the pinned maps of the XDP program and clears them, so
 // the run does not start with counts left over from before it.
-func openKernel(pinDir string) (window.Source, io.Closer, error) {
+func openKernel(pinDir string) (window.Source, kernelMaps, error) {
 	s, err := heavykeeper.Open(pinDir)
 	if err != nil {
 		return nil, nil, err
@@ -30,7 +29,7 @@ func openKernel(pinDir string) (window.Source, io.Closer, error) {
 
 // openBlocklist opens the pinned blocklist of the XDP program and clears
 // it, so the run does not start with sources blocked by an earlier one.
-func openBlocklist(pinDir string) (mitigate.Map, io.Closer, error) {
+func openBlocklist(pinDir string) (mitigate.Map, kernelMaps, error) {
 	b, err := heavykeeper.OpenBlocklist(pinDir)
 	if err != nil {
 		return nil, nil, err

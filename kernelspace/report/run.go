@@ -38,6 +38,34 @@ const ResourceNote = "heap_alloc_bytes, user_cpu_ns, sys_cpu_ns, cpu_interval_ns
 	"map reads and clears. On Linux the user/sys split has a resolution of one " +
 	"scheduler tick."
 
+// HostCPUNote explains the machine-wide CPU columns of windows.csv.
+const HostCPUNote = "host_busy_ns, host_total_ns, host_softirq_ns and " +
+	"host_max_core_share describe the CPU use of the whole machine, read from " +
+	"/proc/stat at the same moments as the detector's own CPU columns. They " +
+	"include the packet processing the kernel does in softirq, where XDP runs, and " +
+	"everything else running on the machine, such as memwatch, so the sender " +
+	"should run on another machine. host_total_ns is all CPU time over the " +
+	"interval summed over the cores, idle included, about cpu_interval_ns times " +
+	"the number of cores; host_busy_ns / host_total_ns is the share of the whole " +
+	"machine in use. host_softirq_ns is the part of host_busy_ns spent in " +
+	"softirq. host_max_core_share is the busy share of the busiest core: packets " +
+	"are processed on the cores that receive them, so one core can be saturated " +
+	"while the machine is not. /proc/stat counts in 10 ms ticks per core. The " +
+	"cost of the detector itself is host_busy_ns minus that of a baseline run " +
+	"with the same traffic and no detector."
+
+// BPFMemoryNote explains bpf_memory.
+const BPFMemoryNote = "bpf_memory is the kernel memory of the XDP program's maps, " +
+	"each as the kernel reports it (memlock in the map's fdinfo: computed per " +
+	"map type from Linux 6.4 on, estimated from the map's dimensions before). " +
+	"The maps are charged to the memory cgroup of the process that loaded " +
+	"heavy_keeper.o (ip link), not to the detector's, so memwatch's main for the " +
+	"detector does not include them: the kernel-space detector's memory is main " +
+	"plus bpf_memory.total_bytes. slot_stats, blocked_stats and blocklist_map are " +
+	"per-CPU and grow with the number of possible CPUs. All maps are preallocated, " +
+	"so their memory does not depend on the traffic. The program itself, its " +
+	"instructions and JIT image, is not included."
+
 // SentPacketsNote reminds that the number of packets sent is not recorded
 // by the detector.
 const SentPacketsNote = "The number of packets sent is not recorded here: the " +
@@ -87,7 +115,26 @@ type Run struct {
 
 	Stats Stats `json:"stats"`
 
+	// BPFMemory is the kernel memory of the XDP program's maps.
+	BPFMemory *BPFMemory `json:"bpf_memory,omitempty"`
+
 	Notes []string `json:"notes"`
+}
+
+// BPFMemory is the kernel memory of the XDP program's maps, as the kernel
+// reports it for each map.
+type BPFMemory struct {
+	// Maps is each map's memory at the end of the run, by pin name. Nil
+	// if it could not be read.
+	Maps map[string]uint64 `json:"maps,omitempty"`
+
+	// TotalBytes is the sum of Maps, and StartTotalBytes the same sum at
+	// the start of the run. The maps are preallocated, so the two should
+	// be equal; a warning says when they are not. Zero if not read.
+	TotalBytes      uint64 `json:"total_bytes"`
+	StartTotalBytes uint64 `json:"start_total_bytes"`
+
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // Live describes a run: where the XDP program's maps were read from, and

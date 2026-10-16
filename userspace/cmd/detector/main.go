@@ -31,7 +31,8 @@
 //	tcpreplay -i ens7 --pps 100000 attack.pcap 2>&1 | tee results/live1/tcpreplay.txt
 //
 // Every window row also carries the detector's own heap in use and the
-// user and system CPU time it spent since the previous window.
+// user and system CPU time it spent since the previous window, and the
+// CPU time the whole machine spent over the same interval (Linux only).
 package main
 
 import (
@@ -394,7 +395,7 @@ func runTrace(opt options, wcfg window.Config, dcfg detector.Config) error {
 
 	info := s.runInfo("pcap", endReason, finished)
 	info.Inputs = src.Files()
-	info.Notes = []string{report.TraceTimingNote, report.ResourceNote}
+	info.Notes = []string{report.TraceTimingNote, report.ResourceNote, report.HostCPUNote}
 
 	if err := report.WriteRun(opt.outDir, info, opt.force); err != nil {
 		return err
@@ -489,7 +490,7 @@ func runLive(opt options, wcfg window.Config, dcfg detector.Config) error {
 
 	run := s.runInfo("live", endReason, finished)
 	run.Live = info
-	run.Notes = []string{report.LiveTimingNote, report.ResourceNote, report.SentPacketsNote}
+	run.Notes = []string{report.LiveTimingNote, report.ResourceNote, report.HostCPUNote, report.SentPacketsNote}
 
 	if err := report.WriteRun(opt.outDir, run, opt.force); err != nil {
 		return err

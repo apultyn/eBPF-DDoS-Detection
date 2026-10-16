@@ -76,6 +76,12 @@ func TestCSVSink(t *testing.T) {
 				UserCPU:   300 * time.Millisecond,
 				SysCPU:    100 * time.Millisecond,
 				Interval:  500 * time.Millisecond,
+
+				HostBusy:         1500 * time.Millisecond,
+				HostTotal:        2 * time.Second,
+				HostSoftirq:      600 * time.Millisecond,
+				HostMaxCoreShare: 0.95,
+				HostMeasured:     true,
 			},
 		},
 	}
@@ -100,31 +106,36 @@ func TestCSVSink(t *testing.T) {
 	skipped := windows[0]
 	if skipped["evaluated"] != "false" || skipped["threshold"] != "" || skipped["malicious"] != "" ||
 		skipped["kernel_drops"] != "" || skipped["cpu_share"] != "" || skipped["heap_alloc_bytes"] != "" ||
+		skipped["host_busy_ns"] != "" || skipped["host_max_core_share"] != "" ||
 		skipped["blocked_packets"] != "0" || skipped["blocked_at_ns"] != "" {
 		t.Errorf("unevaluated window row = %v, want empty detection columns", skipped)
 	}
 
 	w := windows[1]
 	for col, want := range map[string]string{
-		"epoch":             "20",
-		"start_ns":          "1700000005000000000",
-		"skipped_before":    "9",
-		"kernel_drops":      "13",
-		"evaluated_packets": "90",
-		"threshold":         "210.50",
-		"quartile_bound":    "120.00",
-		"threshold_term":    "floor",
-		"malicious":         "false",
-		"flagged_ips":       "1",
-		"eval_end_ns":       "1800000000000000007",
-		"heap_alloc_bytes":  "4194304",
-		"user_cpu_ns":       "300000000",
-		"sys_cpu_ns":        "100000000",
-		"cpu_interval_ns":   "500000000",
-		"cpu_share":         "0.8000",
-		"blocked_packets":   "300",
-		"blocked_bytes":     "30000",
-		"blocked_at_ns":     "1800000000000000008",
+		"epoch":               "20",
+		"start_ns":            "1700000005000000000",
+		"skipped_before":      "9",
+		"kernel_drops":        "13",
+		"evaluated_packets":   "90",
+		"threshold":           "210.50",
+		"quartile_bound":      "120.00",
+		"threshold_term":      "floor",
+		"malicious":           "false",
+		"flagged_ips":         "1",
+		"eval_end_ns":         "1800000000000000007",
+		"heap_alloc_bytes":    "4194304",
+		"user_cpu_ns":         "300000000",
+		"sys_cpu_ns":          "100000000",
+		"cpu_interval_ns":     "500000000",
+		"cpu_share":           "0.8000",
+		"host_busy_ns":        "1500000000",
+		"host_total_ns":       "2000000000",
+		"host_softirq_ns":     "600000000",
+		"host_max_core_share": "0.9500",
+		"blocked_packets":     "300",
+		"blocked_bytes":       "30000",
+		"blocked_at_ns":       "1800000000000000008",
 	} {
 		if w[col] != want {
 			t.Errorf("windows.csv %s = %q, want %q", col, w[col], want)
