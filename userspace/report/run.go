@@ -46,6 +46,22 @@ const ResourceNote = "heap_alloc_bytes, user_cpu_ns, sys_cpu_ns, cpu_interval_ns
 	"the cost per packet instead. sys_cpu_ns is mostly the capture's system " +
 	"calls. On Linux the user/sys split has a resolution of one scheduler tick."
 
+// HostCPUNote explains the machine-wide CPU columns of windows.csv.
+const HostCPUNote = "host_busy_ns, host_total_ns, host_softirq_ns and " +
+	"host_max_core_share describe the CPU use of the whole machine, read from " +
+	"/proc/stat at the same moments as the detector's own CPU columns. They " +
+	"include the packet processing the kernel does in softirq, which the process's own columns miss, and " +
+	"everything else running on the machine, such as memwatch, so the sender " +
+	"should run on another machine. host_total_ns is all CPU time over the " +
+	"interval summed over the cores, idle included, about cpu_interval_ns times " +
+	"the number of cores; host_busy_ns / host_total_ns is the share of the whole " +
+	"machine in use. host_softirq_ns is the part of host_busy_ns spent in " +
+	"softirq. host_max_core_share is the busy share of the busiest core: packets " +
+	"are processed on the cores that receive them, so one core can be saturated " +
+	"while the machine is not. /proc/stat counts in 10 ms ticks per core. The " +
+	"cost of the detector itself is host_busy_ns minus that of a baseline run " +
+	"with the same traffic and no detector."
+
 // SentPacketsNote reminds that the number of packets sent is not recorded
 // by the detector.
 const SentPacketsNote = "The number of packets sent is not recorded here: the " +

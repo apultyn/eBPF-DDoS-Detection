@@ -42,6 +42,7 @@ var windowColumns = []string{
 	"closed_at_ns", "eval_start_ns", "eval_end_ns",
 	"heap_alloc_bytes", "user_cpu_ns", "sys_cpu_ns", "cpu_interval_ns", "cpu_share",
 	"blocked_packets", "blocked_bytes", "blocked_at_ns",
+	"host_busy_ns", "host_total_ns", "host_softirq_ns", "host_max_core_share",
 }
 
 // ipColumns is the header of ips.csv. Rows join windows.csv on epoch.
@@ -146,6 +147,7 @@ func (s *CSVSink) Write(r *detector.WindowResult) error {
 	row = append(row, ns(r.ClosedAt), ns(r.EvalStart), ns(r.EvalEnd))
 	row = appendResources(row, r.Resources)
 	row = append(row, u(r.BlockedPackets), u(r.BlockedBytes), ns(r.BlockedAt))
+	row = appendHost(row, r.Resources)
 	s.row = row
 
 	if err := s.windows.Write(row); err != nil {
@@ -237,6 +239,21 @@ func appendResources(row []string, s resource.Sample) []string {
 		strconv.FormatInt(int64(s.SysCPU), 10),
 		strconv.FormatInt(int64(s.Interval), 10),
 		strconv.FormatFloat(s.CPUShare(), 'f', 4, 64),
+	)
+}
+
+// appendHost adds the machine-wide CPU columns, leaving them empty when
+// they were not measured.
+func appendHost(row []string, s resource.Sample) []string {
+	if !s.HostMeasured {
+		return append(row, "", "", "", "")
+	}
+
+	return append(row,
+		strconv.FormatInt(int64(s.HostBusy), 10),
+		strconv.FormatInt(int64(s.HostTotal), 10),
+		strconv.FormatInt(int64(s.HostSoftirq), 10),
+		strconv.FormatFloat(s.HostMaxCoreShare, 'f', 4, 64),
 	)
 }
 

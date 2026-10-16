@@ -225,7 +225,7 @@ static __always_inline int parse_packet(struct xdp_md *ctx, struct in6_addr *uni
     // - If it's outside allowed memory, we exit program logic
     if ((void *)(eth + 1) > data_end)
     {
-        bpf_printk("Packet ethernet header is larger than allocated memory space\n");
+        // bpf_printk("Packet ethernet header is larger than allocated memory space\n");
         return 0;
     } // --> Exit Program Logic
 
@@ -247,7 +247,7 @@ static __always_inline int parse_packet(struct xdp_md *ctx, struct in6_addr *uni
         unified_ip->s6_addr[10] = 0xff;
         unified_ip->s6_addr[11] = 0xff;
         unified_ip->s6_addr32[3] = iph->saddr;
-        bpf_printk("IPv4 packet logged from: %pI4\n", &iph->saddr);
+        // bpf_printk("IPv4 packet logged from: %pI4\n", &iph->saddr);
     }
     else if (eth->h_proto == bpf_htons(ETH_P_IPV6))
     {                                             // IPv6 check
@@ -267,11 +267,11 @@ static __always_inline int parse_packet(struct xdp_md *ctx, struct in6_addr *uni
             return 0; // Or return 1 if you still want it in the sketch without printing
         }
 
-        bpf_printk("IPv6 packet logged from: %pI6\n", &ip6h->saddr);
+        // bpf_printk("IPv6 packet logged from: %pI6\n", &ip6h->saddr);
     }
     else
     {
-        bpf_printk("Non-IP Packet Detected!");
+        // bpf_printk("Non-IP Packet Detected!");
         return 0;
     }
 

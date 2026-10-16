@@ -22,7 +22,11 @@
 //	tcpreplay -i ens7 --pps 100000 attack.pcap 2>&1 | tee results/live1/tcpreplay.txt
 //
 // Every window row also carries the detector's own heap in use and the
-// user and system CPU time it spent since the previous window.
+// user and system CPU time it spent since the previous window, and the
+// CPU time the whole machine spent over the same interval, which includes
+// XDP's. run.json records the kernel memory of the XDP program's maps,
+// which memwatch does not see, since they belong to the process that
+// loaded heavy_keeper.o.
 //
 // With -block, every source flagged by its per-IP verdict is added to the
 // XDP program's blocklist, and its packets are dropped before they reach
@@ -420,6 +424,10 @@ func runKernel(opt options, wcfg window.Config, dcfg detector.Config, mcfg mitig
 	}
 	defer blCloser.Close()
 
+	// The maps' memory is read now and again at the end; they are
+	// preallocated, so the two readings should agree.
+	_, bpfStart, bpfStartErr := readBPFMemory(closer, blCloser)
+
 	var mit *mitigate.Mitigator
 
 	if opt.block {
@@ -505,7 +513,9 @@ func runKernel(opt options, wcfg window.Config, dcfg detector.Config, mcfg mitig
 		Config:     runConfig(wcfg, dcfg, mcfg, opt.block),
 		Live:       info,
 		Stats:      s.stats,
-		Notes:      []string{report.TimingNote, report.ResourceNote, report.SentPacketsNote},
+		BPFMemory:  bpfMemory(bpfStart, bpfStartErr, closer, blCloser),
+		Notes: []string{report.TimingNote, report.ResourceNote, report.HostCPUNote,
+			report.BPFMemoryNote, report.SentPacketsNote},
 	}
 
 	if opt.block {
@@ -600,6 +610,16 @@ func printSummary(r *report.Run) {
 	log.Printf("  behind:   %d windows discarded, %d jumps over %d epochs", s.Window.Discarded, s.Window.Jumps, s.Window.SkippedEpochs)
 	log.Printf("  sources:  %d flagged IP rows, %d tracked, %d evicted (ip mode %s)",
 		s.FlaggedIPRows, s.TrackedIPs, s.EvictedIPs, r.Config.IPMode)
+
+	if m := r.BPFMemory; m != nil {
+		if m.Maps != nil {
+			log.Printf("  maps:     %.1f MiB of BPF map memory in %d maps", float64(m.TotalBytes)/(1<<20), len(m.Maps))
+		}
+
+		for _, w := range m.Warnings {
+			log.Printf("warning: BPF map memory: %s", w)
+		}
+	}
 
 	if b := s.Blocklist; b != nil {
 		log.Printf("  blocked:  %d packets dropped; %d sources blocked, %d refreshed, %d expired, %d evicted, %d active at end (peak %d)",
