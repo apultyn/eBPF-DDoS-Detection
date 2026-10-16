@@ -2,3 +2,13 @@
 node_modules/
 .npm-cache/
 .husky/_/
+
+# Python
+__pycache__/
+.pytest_cache/
+
+# Data and results: never committed
+/labels/
+/results/
+/eval/
+*.parquet
