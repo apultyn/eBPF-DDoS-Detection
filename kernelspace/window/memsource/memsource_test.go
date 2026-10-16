@@ -62,6 +62,7 @@ func TestResetClearsOnlyThatSlotAndIsRecorded(t *testing.T) {
 
 	s.Add(0, ipA, 1, 10)
 	s.Add(3, ipB, 1, 10)
+	s.AddBlocked(3, 5, 50)
 
 	if err := s.Reset(3); err != nil {
 		t.Fatal(err)
@@ -69,6 +70,9 @@ func TestResetClearsOnlyThatSlotAndIsRecorded(t *testing.T) {
 
 	if n, _ := s.Count(3, ipB); n != 0 {
 		t.Errorf("slot 3 not cleared: %d", n)
+	}
+	if p, b, _ := s.Blocked(3); p != 0 || b != 0 {
+		t.Errorf("slot 3 blocked totals not cleared: %d packets, %d bytes", p, b)
 	}
 	if c, _ := s.Candidates(3); len(c) != 0 {
 		t.Errorf("slot 3 candidates not cleared: %v", c)

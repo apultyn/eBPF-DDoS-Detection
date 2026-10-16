@@ -18,6 +18,7 @@ func TestStructSizes(t *testing.T) {
 		{"bucket", unsafe.Sizeof(bucket{}), 8},
 		{"topk_entry", unsafe.Sizeof(topkEntry{}), 20},
 		{"slot_stats", unsafe.Sizeof(slotStats{}), 16},
+		{"block_entry", unsafe.Sizeof(blockEntry{}), 16},
 	}
 
 	for _, c := range cases {
@@ -78,5 +79,12 @@ func TestSumStats(t *testing.T) {
 	p, b := sumStats([]slotStats{{10, 1000}, {0, 0}, {5, 300}})
 	if p != 15 || b != 1300 {
 		t.Errorf("got %d packets, %d bytes; want 15, 1300", p, b)
+	}
+}
+
+func TestMergeBlockEntry(t *testing.T) {
+	last, drops := mergeBlockEntry([]blockEntry{{100, 3}, {0, 0}, {250, 7}, {90, 1}})
+	if last != 250 || drops != 11 {
+		t.Errorf("got last seen %d, %d drops; want 250, 11", last, drops)
 	}
 }

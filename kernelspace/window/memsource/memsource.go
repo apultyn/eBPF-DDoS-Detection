@@ -38,6 +38,9 @@ type slot struct {
 	counts  map[flow.Key]uint32
 	packets uint64
 	bytes   uint64
+
+	blockedPackets uint64
+	blockedBytes   uint64
 }
 
 // New returns a Source with every slot empty.
@@ -59,6 +62,15 @@ func (s *Source) Add(slot int, key flow.Key, packets uint32, bytes uint64) {
 	sl.counts[key] += packets
 	sl.packets += uint64(packets)
 	sl.bytes += bytes
+}
+
+// AddBlocked records packets totalling bytes that the blocklist dropped in
+// slot. They are not counted anywhere else, as in the kernel.
+func (s *Source) AddBlocked(slot int, packets, bytes uint64) {
+	sl := &s.slots[s.mustIndex(slot)]
+
+	sl.blockedPackets += packets
+	sl.blockedBytes += bytes
 }
 
 func (s *Source) Count(slot int, key flow.Key) (uint32, error) {
@@ -116,6 +128,15 @@ func (s *Source) Totals(slot int) (packets, bytes uint64, err error) {
 	return sl.packets, sl.bytes, nil
 }
 
+func (s *Source) Blocked(slot int) (packets, bytes uint64, err error) {
+	sl, err := s.get(slot)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	return sl.blockedPackets, sl.blockedBytes, nil
+}
+
 func (s *Source) Reset(slot int) error {
 	sl, err := s.get(slot)
 	if err != nil {
@@ -125,6 +146,8 @@ func (s *Source) Reset(slot int) error {
 	clear(sl.counts)
 	sl.packets = 0
 	sl.bytes = 0
+	sl.blockedPackets = 0
+	sl.blockedBytes = 0
 
 	s.Resets = append(s.Resets, slot)
 

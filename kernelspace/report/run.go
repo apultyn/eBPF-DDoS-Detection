@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/apultyn/eBPF-DDoS-Detection/kernelspace/capture"
+	"github.com/apultyn/eBPF-DDoS-Detection/kernelspace/mitigate"
 	"github.com/apultyn/eBPF-DDoS-Detection/kernelspace/window"
 )
 
@@ -43,6 +44,18 @@ const SentPacketsNote = "The number of packets sent is not recorded here: the " 
 	"detector only sees what XDP counted. Save the tcpreplay output from the " +
 	"sender next to this run.json; together with live.nic_delta it shows how " +
 	"many packets were lost before XDP."
+
+// BlocklistNote explains blocking, for runs that had it on.
+const BlocklistNote = "Sources flagged by their per-IP verdict were added to the " +
+	"kernel blocklist, and XDP dropped their packets before the sketch. Dropped " +
+	"packets are not in packets/bytes nor in any count the thresholds see; they " +
+	"are in blocked_packets/blocked_bytes of the window they were dropped in. " +
+	"blocked_at_ns - end_ns is the delay from the end of the window to the " +
+	"sources being blocked. A source stays blocked for block_ttl after it was " +
+	"last flagged (0: until the run ends); when the blocklist is full, the source " +
+	"XDP saw last in the oldest window is evicted, the one with the fewest drops " +
+	"among equals. The blocklist is cleared when the run starts but not when it " +
+	"ends."
 
 // How a run ended.
 const (
@@ -132,6 +145,13 @@ type Config struct {
 
 	IPMode               string `json:"iqr_ip_mode"`
 	MaxSharedHistorySize int    `json:"iqr_max_shared_history"`
+
+	// Block reports whether flagged sources were blocked. BlockTTL,
+	// BlockCapacity and BlockAllow are only set when they were.
+	Block         bool     `json:"block"`
+	BlockTTL      string   `json:"block_ttl,omitempty"`
+	BlockCapacity int      `json:"block_capacity,omitempty"`
+	BlockAllow    []string `json:"block_allow,omitempty"`
 }
 
 // Stats summarizes the run.
@@ -152,6 +172,12 @@ type Stats struct {
 
 	TrackedIPs uint64 `json:"tracked_ips"`
 	EvictedIPs uint64 `json:"evicted_ips"`
+
+	// BlockedPackets is the total dropped by the blocklist over the
+	// windows handed to the detector, and Blocklist what the detector did
+	// with the blocklist. Blocklist is nil when blocking was off.
+	BlockedPackets uint64          `json:"blocked_packets"`
+	Blocklist      *mitigate.Stats `json:"blocklist,omitempty"`
 
 	WallSeconds      float64 `json:"wall_seconds"`
 	PacketsPerSecond float64 `json:"packets_per_second"`

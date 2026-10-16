@@ -8,6 +8,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/apultyn/eBPF-DDoS-Detection/kernelspace/heavykeeper"
+	"github.com/apultyn/eBPF-DDoS-Detection/kernelspace/mitigate"
 	"github.com/apultyn/eBPF-DDoS-Detection/kernelspace/window"
 )
 
@@ -25,6 +26,22 @@ func openKernel(pinDir string) (window.Source, io.Closer, error) {
 	}
 
 	return s, s, nil
+}
+
+// openBlocklist opens the pinned blocklist of the XDP program and clears
+// it, so the run does not start with sources blocked by an earlier one.
+func openBlocklist(pinDir string) (mitigate.Map, io.Closer, error) {
+	b, err := heavykeeper.OpenBlocklist(pinDir)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if err := b.Clear(); err != nil {
+		b.Close()
+		return nil, nil, err
+	}
+
+	return b, b, nil
 }
 
 // taiClock returns a function reading CLOCK_TAI, the clock XDP picks a

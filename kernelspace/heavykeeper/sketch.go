@@ -23,6 +23,8 @@ const (
 	TotalBuckets = Depth * Width
 	K            = 32 // K_SIZE, entries in each topk_map_N
 	Slots        = 4  // SLOTS, number of sketch_N and topk_map_N maps
+
+	BlocklistSize = 1000 // BLOCKLIST_SIZE, max_entries of blocklist_map
 )
 
 // DefaultPinDir is where libbpf pins maps declared with
@@ -50,6 +52,13 @@ type slotStats struct {
 	Bytes   uint64
 }
 
+// blockEntry mirrors struct block_entry. blocklist_map is per-CPU, so the
+// kernel returns one of these for every possible CPU.
+type blockEntry struct {
+	LastSeenNs uint64
+	Drops      uint64
+}
+
 // indexSeeds mirrors INDEX_SEEDS.
 var indexSeeds = [Depth]uint32{0x9747b28c, 0x5bd1e995, 0x239b921b}
 
@@ -66,6 +75,14 @@ func topkPath(dir string, slot int) string {
 
 func statsPath(dir string) string {
 	return filepath.Join(dir, "slot_stats")
+}
+
+func blockedStatsPath(dir string) string {
+	return filepath.Join(dir, "blocked_stats")
+}
+
+func blocklistPath(dir string) string {
+	return filepath.Join(dir, "blocklist_map")
 }
 
 // hash32 mirrors hash32 in heavy_keeper.c, a MurmurHash3 over the 16-byte
@@ -157,4 +174,15 @@ func sumStats(perCPU []slotStats) (packets, bytes uint64) {
 	}
 
 	return packets, bytes
+}
+
+// mergeBlockEntry combines the per-CPU copies of one blocklist entry: the
+// latest drop on any CPU, and the drops on all of them.
+func mergeBlockEntry(perCPU []blockEntry) (lastSeenNs, drops uint64) {
+	for _, e := range perCPU {
+		lastSeenNs = max(lastSeenNs, e.LastSeenNs)
+		drops += e.Drops
+	}
+
+	return lastSeenNs, drops
 }

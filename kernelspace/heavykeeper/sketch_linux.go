@@ -10,7 +10,7 @@ import (
 )
 
 // Sketch is a handle to the pinned maps of heavy_keeper.c: per slot one
-// sketch, one Top-K table and one entry in slot_stats.
+// sketch, one Top-K table and one entry in slot_stats and blocked_stats.
 //
 // A slot holds one window. The kernel only ever adds to the slot of the
 // current window; clearing a slot before the kernel reuses it is the
@@ -19,6 +19,7 @@ type Sketch struct {
 	sketches [Slots]*ebpf.Map
 	topk     [Slots]*ebpf.Map
 	stats    *ebpf.Map
+	blocked  *ebpf.Map
 
 	// Buffers built once in Open so that reading and clearing a slot
 	// allocates nothing beyond the returned candidate list.
@@ -79,6 +80,10 @@ func Open(dir string) (*Sketch, error) {
 		return nil, err
 	}
 
+	if s.blocked, err = open(blockedStatsPath(dir)); err != nil {
+		return nil, err
+	}
+
 	return s, nil
 }
 
@@ -98,6 +103,7 @@ func (s *Sketch) Close() error {
 		closeMap(&s.topk[i])
 	}
 	closeMap(&s.stats)
+	closeMap(&s.blocked)
 
 	return errors.Join(errs...)
 }
@@ -160,6 +166,22 @@ func (s *Sketch) Totals(slot int) (packets, bytes uint64, err error) {
 	return packets, bytes, nil
 }
 
+// Blocked returns the number of packets and bytes the blocklist dropped in
+// slot, summed over all CPUs. Dropped packets are not in Totals.
+func (s *Sketch) Blocked(slot int) (packets, bytes uint64, err error) {
+	if err := s.check(slot); err != nil {
+		return 0, 0, err
+	}
+
+	if err := s.blocked.Lookup(uint32(slot), &s.statsBuf); err != nil {
+		return 0, 0, fmt.Errorf("heavykeeper: blocked stats %d: %w", slot, err)
+	}
+
+	packets, bytes = sumStats(s.statsBuf)
+
+	return packets, bytes, nil
+}
+
 // Reset clears slot: its sketch, its Top-K table and its totals. Call it
 // only on a slot the kernel is not writing to, i.e. one whose window has
 // passed and is no longer needed for evaluation.
@@ -178,6 +200,10 @@ func (s *Sketch) Reset(slot int) error {
 
 	if err := s.stats.Update(uint32(slot), s.zeroStats, ebpf.UpdateAny); err != nil {
 		return fmt.Errorf("heavykeeper: clearing stats %d: %w", slot, err)
+	}
+
+	if err := s.blocked.Update(uint32(slot), s.zeroStats, ebpf.UpdateAny); err != nil {
+		return fmt.Errorf("heavykeeper: clearing blocked stats %d: %w", slot, err)
 	}
 
 	return nil

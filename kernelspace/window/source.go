@@ -25,6 +25,10 @@ type Source interface {
 	// Totals returns the exact packet and byte totals of slot.
 	Totals(slot int) (packets, bytes uint64, err error)
 
+	// Blocked returns the packets and bytes the blocklist dropped in slot.
+	// They are not part of Totals.
+	Blocked(slot int) (packets, bytes uint64, err error)
+
 	// Reset clears slot so it can hold a new window.
 	Reset(slot int) error
 }
