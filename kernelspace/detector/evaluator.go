@@ -75,6 +75,11 @@ type IPResult struct {
 
 	// Verdict is the source's per-IP IQR verdict.
 	Verdict iqr.Verdict
+
+	// Blocked reports that the source is on the blocklist because of this
+	// verdict, newly added or with its TTL restarted. It is set by the
+	// caller, and is always false when blocking is off.
+	Blocked bool
 }
 
 // WindowResult is the evaluation of one closed window.
@@ -93,6 +98,11 @@ type WindowResult struct {
 	// the kernel.
 	Packets uint64
 	Bytes   uint64
+
+	// BlockedPackets and BlockedBytes are what the blocklist dropped
+	// during the window. They are not part of Packets and Bytes.
+	BlockedPackets uint64
+	BlockedBytes   uint64
 
 	// KernelDrops is the number of packets dropped before reaching the
 	// detector between the previous window closing and this one. It is
@@ -122,6 +132,10 @@ type WindowResult struct {
 	ClosedAt  time.Time
 	EvalStart time.Time
 	EvalEnd   time.Time
+
+	// BlockedAt is the wall-clock time the flagged sources were pushed to
+	// the blocklist, set by the caller. It is zero if none were.
+	BlockedAt time.Time
 
 	// Resources is the detector process's own memory and CPU use over the
 	// interval since the previous window was evaluated, up to and
@@ -207,8 +221,12 @@ func (e *Evaluator) Evaluate(c window.Closed) (WindowResult, error) {
 		Packets:       w.Packets,
 		Bytes:         w.Bytes,
 		KernelDrops:   -1,
-		ClosedAt:      c.ClosedAt,
-		EvalStart:     e.now(),
+
+		BlockedPackets: w.BlockedPackets,
+		BlockedBytes:   w.BlockedBytes,
+
+		ClosedAt:  c.ClosedAt,
+		EvalStart: e.now(),
 	}
 
 	var prev *window.Window

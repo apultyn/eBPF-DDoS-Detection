@@ -65,11 +65,12 @@ func TestCSVSink(t *testing.T) {
 			Verdict: iqr.Verdict{Threshold: 210.5, QuartileBound: 120, FromFloor: true},
 			IPs: []detector.IPResult{
 				{IP: flow.MustParse("2001:db8::1"), Current: 40, Previous: 30, Evaluated: 70,
-					Verdict: iqr.Verdict{Threshold: 60, QuartileBound: 55.25, IsMalicious: true}},
+					Verdict: iqr.Verdict{Threshold: 60, QuartileBound: 55.25, IsMalicious: true}, Blocked: true},
 				{IP: flow.MustParse("192.0.2.9"), Current: 5, Previous: 0, Evaluated: 5,
 					Verdict: iqr.Verdict{Threshold: 200, WarmUp: true, Shared: true}},
 			},
 			ClosedAt: closed, EvalStart: closed.Add(1), EvalEnd: closed.Add(2),
+			BlockedPackets: 300, BlockedBytes: 30000, BlockedAt: closed.Add(3),
 			Resources: resource.Sample{
 				HeapAlloc: 4 << 20,
 				UserCPU:   300 * time.Millisecond,
@@ -98,7 +99,8 @@ func TestCSVSink(t *testing.T) {
 
 	skipped := windows[0]
 	if skipped["evaluated"] != "false" || skipped["threshold"] != "" || skipped["malicious"] != "" ||
-		skipped["kernel_drops"] != "" || skipped["cpu_share"] != "" || skipped["heap_alloc_bytes"] != "" {
+		skipped["kernel_drops"] != "" || skipped["cpu_share"] != "" || skipped["heap_alloc_bytes"] != "" ||
+		skipped["blocked_packets"] != "0" || skipped["blocked_at_ns"] != "" {
 		t.Errorf("unevaluated window row = %v, want empty detection columns", skipped)
 	}
 
@@ -120,6 +122,9 @@ func TestCSVSink(t *testing.T) {
 		"sys_cpu_ns":        "100000000",
 		"cpu_interval_ns":   "500000000",
 		"cpu_share":         "0.8000",
+		"blocked_packets":   "300",
+		"blocked_bytes":     "30000",
+		"blocked_at_ns":     "1800000000000000008",
 	} {
 		if w[col] != want {
 			t.Errorf("windows.csv %s = %q, want %q", col, w[col], want)
@@ -130,12 +135,12 @@ func TestCSVSink(t *testing.T) {
 
 	if flagged["ip"] != "2001:db8::1" || flagged["evaluated"] != "70" ||
 		flagged["threshold_term"] != "iqr" || flagged["malicious"] != "true" ||
-		flagged["threshold_source"] != "own" {
+		flagged["threshold_source"] != "own" || flagged["blocked"] != "true" {
 		t.Errorf("flagged IP row = %v", flagged)
 	}
 
 	if warming["ip"] != "192.0.2.9" || warming["warm_up"] != "true" || warming["threshold"] != "" ||
-		warming["threshold_source"] != "shared" {
+		warming["threshold_source"] != "shared" || warming["blocked"] != "false" {
 		t.Errorf("warm-up IP row = %v, want an IPv4 address with no threshold, waiting on the shared history", warming)
 	}
 }

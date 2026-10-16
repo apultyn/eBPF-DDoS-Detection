@@ -50,6 +50,12 @@ type Window struct {
 	Packets uint64
 	Bytes   uint64
 
+	// BlockedPackets and BlockedBytes are the traffic the blocklist
+	// dropped during the window. It never reached the sketch and is not
+	// part of Packets and Bytes.
+	BlockedPackets uint64
+	BlockedBytes   uint64
+
 	src    Source
 	slot   int
 	k      int
@@ -108,6 +114,11 @@ func (w *Window) load() error {
 		return fmt.Errorf("window: epoch %d: %w", w.Epoch, err)
 	}
 
+	blockedPackets, blockedBytes, err := w.src.Blocked(w.slot)
+	if err != nil {
+		return fmt.Errorf("window: epoch %d: %w", w.Epoch, err)
+	}
+
 	candidates, err := w.src.Candidates(w.slot)
 	if err != nil {
 		return fmt.Errorf("window: epoch %d: %w", w.Epoch, err)
@@ -119,6 +130,8 @@ func (w *Window) load() error {
 
 	w.Packets = packets
 	w.Bytes = bytes
+	w.BlockedPackets = blockedPackets
+	w.BlockedBytes = blockedBytes
 	w.candidates = candidates
 
 	return nil
@@ -133,6 +146,8 @@ func (w *Window) reset(e epoch.Epoch, clean bool) {
 	w.SkippedBefore = 0
 	w.Packets = 0
 	w.Bytes = 0
+	w.BlockedPackets = 0
+	w.BlockedBytes = 0
 	w.candidates = nil
 	w.clean = clean
 }

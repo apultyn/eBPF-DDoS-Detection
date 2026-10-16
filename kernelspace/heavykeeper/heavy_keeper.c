@@ -12,10 +12,10 @@
 // - I: Header Path
 // 2. Attach to Network Interface: sudo ip link set dev enp3s0 xdpgeneric obj heavy_keeper.o sec xdp
 // 3. Show Attached Links: ip link show
-// 4. Expose Filepath for Userspace Programs:
-// ¤ sudo bpftool map pin name data_sketch_map_0 /sys/fs/bpf/heavy_keeper_map
-// ¤ sudo bpftool map pin name data_sketch_map_1 /sys/fs/bpf/heavy_keeper_map
-// 5. Expose Filepath for Userspace Programs: sudo bpftool map pin name blocklist_map /sys/fs/bpf/blocklist_map
+// 4. Maps are pinned automatically (LIBBPF_PIN_BY_NAME) to /sys/fs/bpf/<map name>
+// ¤ If a map's definition changes, remove its old pin first or loading fails:
+//   sudo rm -f /sys/fs/bpf/blocklist_map
+// 5. Inspect the blocklist: sudo bpftool map dump pinned /sys/fs/bpf/blocklist_map
 // 6. Read From Debug Tracepipe: sudo cat /sys/kernel/debug/tracing/trace_pipe
 // 7. List all buckets with count < 0: sudo bpftool map dump pinned /sys/fs/bpf/heavy_keeper_map | awk -v RS='}' '/"count": [1-9]/ { print $0 "}" }'
 // 8. Detatch from Network Interface: sudo ip link set dev enp3s0 xdpgeneric off
@@ -60,6 +60,9 @@
 #define DECAY_THRESHOLD 64
 #define K_SIZE 32
 
+// ¤ Blocklist Parameters
+#define BLOCKLIST_SIZE 1000 // Max number of blocked IP addresses
+
 // -------- Constants -------- //
 
 // Premade seed table
@@ -91,11 +94,21 @@ struct bucket
     __u32 count; // 32-bit packet count
 };
 
+// Value of a blocklist entry
+// ¤ Userspace inserts the entry with last_seen_ns = now and drops = 0
+// ¤ XDP refreshes both on every dropped packet
+// ¤ Userspace evicts the most stale entry (oldest last_seen_ns, ties broken by fewest drops) when the map is full
+struct block_entry
+{
+    __u64 last_seen_ns; // CLOCK_TAI time of the last dropped packet
+    __u64 drops;        // Number of packets dropped
+};
+
 struct { // Data structure to store IP blocklist (modified from userspace)
-    __uint(type, BPF_MAP_TYPE_HASH);
-    __uint(max_entries, 1000);           // Max number of blocked IP addresses
+    __uint(type, BPF_MAP_TYPE_PERCPU_HASH); // Per-CPU so a flood does not bounce one cache line between cores
+    __uint(max_entries, BLOCKLIST_SIZE);
     __type(key, struct in6_addr);
-    __type(value, __u8);
+    __type(value, struct block_entry);
     __uint(pinning, LIBBPF_PIN_BY_NAME); // Pin filepath ending to struct name
 } blocklist_map SEC(".maps");
 
@@ -181,6 +194,14 @@ struct {
     __type(value, struct slot_stats);
     __uint(pinning, LIBBPF_PIN_BY_NAME);
 } slot_stats SEC(".maps");
+
+struct { // Packets and bytes dropped by the blocklist, per window slot
+    __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+    __uint(max_entries, SLOTS);
+    __type(key, __u32);
+    __type(value, struct slot_stats);
+    __uint(pinning, LIBBPF_PIN_BY_NAME);
+} blocked_stats SEC(".maps");
 
 
 // ----- Helper Functions ----- //
@@ -481,9 +502,9 @@ static __always_inline void update(const struct in6_addr *ip, int sketch_index)
 
 // Helper function to get sketch index based on current time
 // ¤ Note that userspace implementation can run the exact same calculation on packet timestamps to get same result
-static __always_inline int get_sketch_index()
+static __always_inline int get_sketch_index(__u64 now)
 {
-    __u64 epoch = (bpf_ktime_get_tai_ns() >> 29);
+    __u64 epoch = (now >> 29);
     __u32 index = epoch & SLOT_MASK;
     return index;
 }
@@ -501,15 +522,27 @@ int heavy_keeper(struct xdp_md *ctx)
     if (parse_packet(ctx, &unified_ip) <= 0)
         return XDP_PASS; // --> Exit Program Logic
 
-    __u8 *blocked = bpf_map_lookup_elem(&blocklist_map, &unified_ip);
+    __u64 now = bpf_ktime_get_tai_ns();
+    int sketch_index = get_sketch_index(now);
+    __u32 key = sketch_index;
+
+    // Drop blocked sources before they reach the sketch
+    // ¤ The entry is this CPU's copy, so no atomics are needed
+    struct block_entry *blocked = bpf_map_lookup_elem(&blocklist_map, &unified_ip);
     if (blocked) {
+        blocked->last_seen_ns = now;
+        blocked->drops++;
+
+        struct slot_stats *bst = bpf_map_lookup_elem(&blocked_stats, &key);
+        if (bst) {
+            bst->packets++;
+            bst->bytes += ctx->data_end - ctx->data;
+        }
+
         return XDP_DROP;
     }
 
-    int sketch_index = get_sketch_index();
-
     // Update packet count for slot_stats
-    __u32 key = sketch_index;
     struct slot_stats *st = bpf_map_lookup_elem(&slot_stats, &key);
     if (st) {
         st->packets++;

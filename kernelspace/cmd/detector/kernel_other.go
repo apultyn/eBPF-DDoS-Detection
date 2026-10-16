@@ -7,12 +7,17 @@ import (
 	"io"
 	"time"
 
+	"github.com/apultyn/eBPF-DDoS-Detection/kernelspace/mitigate"
 	"github.com/apultyn/eBPF-DDoS-Detection/kernelspace/window"
 )
 
 var errNotLinux = errors.New("the kernel-space detector reads XDP maps and needs Linux")
 
 func openKernel(string) (window.Source, io.Closer, error) {
+	return nil, nil, errNotLinux
+}
+
+func openBlocklist(string) (mitigate.Map, io.Closer, error) {
 	return nil, nil, errNotLinux
 }
 

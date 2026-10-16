@@ -23,6 +23,15 @@
 //
 // Every window row also carries the detector's own heap in use and the
 // user and system CPU time it spent since the previous window.
+//
+// With -block, every source flagged by its per-IP verdict is added to the
+// XDP program's blocklist, and its packets are dropped before they reach
+// the sketch. A source stays blocked for -block-ttl after it was last
+// flagged. Sources given with -allow are never blocked; include the host
+// the experiment is run from. The blocklist is cleared at start whether
+// or not -block is given, so an earlier run cannot skew this one:
+//
+//	detector -iface ens7 -block -block-ttl 30s -allow 192.0.2.10 -out results/live2
 package main
 
 import (
@@ -30,15 +39,19 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net/netip"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/apultyn/eBPF-DDoS-Detection/kernelspace/capture"
 	"github.com/apultyn/eBPF-DDoS-Detection/kernelspace/detector"
+	"github.com/apultyn/eBPF-DDoS-Detection/kernelspace/flow"
 	"github.com/apultyn/eBPF-DDoS-Detection/kernelspace/heavykeeper"
 	"github.com/apultyn/eBPF-DDoS-Detection/kernelspace/iqr"
+	"github.com/apultyn/eBPF-DDoS-Detection/kernelspace/mitigate"
 	"github.com/apultyn/eBPF-DDoS-Detection/kernelspace/report"
 	"github.com/apultyn/eBPF-DDoS-Detection/kernelspace/resource"
 	"github.com/apultyn/eBPF-DDoS-Detection/kernelspace/window"
@@ -65,16 +78,21 @@ type options struct {
 	outDir   string
 	force    bool
 	quiet    bool
+
+	// block turns on pushing flagged sources to the blocklist.
+	block bool
 }
 
 func run() error {
 	wcfg := window.DefaultConfig()
 	dcfg := detector.DefaultConfig()
+	mcfg := mitigate.DefaultConfig()
 
 	var (
 		opt    options
 		mode   string
 		ipMode string
+		allow  string
 	)
 
 	flag.StringVar(&opt.pinDir, "pin-dir", heavykeeper.DefaultPinDir, "directory the XDP program's maps are pinned in")
@@ -98,6 +116,10 @@ func run() error {
 	flag.IntVar(&dcfg.IQR.MaxSharedHistorySize, "shared-history", dcfg.IQR.MaxSharedHistorySize,
 		"samples kept in the history shared by all sources (shared and hybrid modes)")
 
+	flag.BoolVar(&opt.block, "block", false, "add sources flagged by their per-IP verdict to the XDP blocklist")
+	flag.DurationVar(&mcfg.TTL, "block-ttl", mcfg.TTL, "how long a source stays blocked after it was last flagged; 0 until the run ends")
+	flag.StringVar(&allow, "allow", "", "comma-separated addresses that are never blocked")
+
 	flag.Parse()
 
 	if opt.outDir == "" {
@@ -115,11 +137,42 @@ func run() error {
 		return err
 	}
 
+	if mcfg.Allow, err = parseAllow(allow); err != nil {
+		return err
+	}
+
+	mcfg.WindowLength = wcfg.Length
+
+	if mcfg.TTL < 0 {
+		return fmt.Errorf("-block-ttl %v is negative", mcfg.TTL)
+	}
+
 	if err := prepareOutput(opt.outDir, opt.force); err != nil {
 		return err
 	}
 
-	return runKernel(opt, wcfg, dcfg)
+	return runKernel(opt, wcfg, dcfg, mcfg)
+}
+
+// parseAllow parses the -allow list.
+func parseAllow(s string) ([]flow.Key, error) {
+	var keys []flow.Key
+
+	for _, f := range strings.Split(s, ",") {
+		f = strings.TrimSpace(f)
+		if f == "" {
+			continue
+		}
+
+		a, err := netip.ParseAddr(f)
+		if err != nil {
+			return nil, fmt.Errorf("-allow: %w", err)
+		}
+
+		keys = append(keys, flow.FromAddr(a))
+	}
+
+	return keys, nil
 }
 
 // session is a run in progress: the pipeline and its accumulated stats.
@@ -131,6 +184,13 @@ type session struct {
 	ev   *detector.Evaluator
 	agg  *window.Aggregator
 	sink *report.CSVSink
+
+	// mit pushes flagged sources to the blocklist; nil when blocking is
+	// off.
+	mit *mitigate.Mitigator
+
+	// clock is CLOCK_TAI, the clock the blocklist's times are on.
+	clock func() time.Time
 
 	stats report.Stats
 
@@ -147,11 +207,13 @@ type session struct {
 	next    time.Time
 }
 
-func newSession(opt options, wcfg window.Config, dcfg detector.Config, src window.Source, clock func() time.Time, taiOffset time.Duration) (*session, error) {
+func newSession(opt options, wcfg window.Config, dcfg detector.Config, src window.Source, mit *mitigate.Mitigator, clock func() time.Time, taiOffset time.Duration) (*session, error) {
 	s := &session{
 		opt:       opt,
 		wcfg:      wcfg,
 		dcfg:      dcfg,
+		mit:       mit,
+		clock:     clock,
 		taiOffset: taiOffset,
 		stop:      make(chan struct{}),
 		started:   time.Now(),
@@ -186,14 +248,20 @@ func (s *session) onClose(c window.Closed) error {
 		return err
 	}
 
-	// Sampled after the evaluation, so a window's figures include the
-	// cost of judging it; writing the row falls to the next window.
+	if s.mit != nil {
+		s.block(&r)
+	}
+
+	// Sampled after the evaluation and blocking, so a window's figures
+	// include the cost of judging it; writing the row falls to the next
+	// window.
 	r.Resources = s.resources.Sample()
 
 	r.Start = r.Start.Add(-s.taiOffset)
 	r.End = r.End.Add(-s.taiOffset)
 
 	s.stats.Packets += r.Packets
+	s.stats.BlockedPackets += r.BlockedPackets
 
 	if r.Evaluated {
 		s.stats.EvaluatedWindows++
@@ -213,6 +281,45 @@ func (s *session) onClose(c window.Closed) error {
 	}
 
 	return s.sink.Write(&r)
+}
+
+// block expires sources whose TTL has run out, then pushes the window's
+// flagged sources to the blocklist. A failed map operation is logged but
+// does not end the run: losing mitigation is better than losing the
+// measurements.
+func (s *session) block(r *detector.WindowResult) {
+	now := s.clock()
+
+	if err := s.mit.Expire(now); err != nil {
+		log.Printf("warning: window %d: %v", r.Epoch, err)
+	}
+
+	var (
+		flagged []flow.Key
+		at      []int
+	)
+
+	for i, ip := range r.IPs {
+		if ip.Verdict.IsMalicious {
+			flagged = append(flagged, ip.IP)
+			at = append(at, i)
+		}
+	}
+
+	if len(flagged) == 0 {
+		return
+	}
+
+	ok, err := s.mit.Block(flagged, now)
+	r.BlockedAt = time.Now()
+
+	if err != nil {
+		log.Printf("warning: window %d: %v", r.Epoch, err)
+	}
+
+	for j, i := range at {
+		r.IPs[i].Blocked = ok[j]
+	}
 }
 
 func (s *session) loop(clock func() time.Time) *loop {
@@ -279,6 +386,10 @@ func (s *session) finish(finished time.Time) error {
 	s.stats.Window = s.agg.Stats()
 	s.stats.TrackedIPs = uint64(s.ev.Detector().TrackedIPs())
 	s.stats.EvictedIPs = s.ev.Detector().EvictedIPs()
+	if s.mit != nil {
+		st := s.mit.Stats()
+		s.stats.Blocklist = &st
+	}
 	s.stats.WallSeconds = finished.Sub(s.started).Seconds()
 	if s.stats.WallSeconds > 0 {
 		s.stats.PacketsPerSecond = float64(s.stats.Packets) / s.stats.WallSeconds
@@ -287,7 +398,7 @@ func (s *session) finish(finished time.Time) error {
 	return err
 }
 
-func runKernel(opt options, wcfg window.Config, dcfg detector.Config) error {
+func runKernel(opt options, wcfg window.Config, dcfg detector.Config, mcfg mitigate.Config) error {
 	clock, err := taiClock()
 	if err != nil {
 		return err
@@ -301,11 +412,27 @@ func runKernel(opt options, wcfg window.Config, dcfg detector.Config) error {
 	}
 	defer closer.Close()
 
+	// The blocklist is cleared even when blocking is off, so sources an
+	// earlier run blocked do not have their packets dropped in this one.
+	bl, blCloser, err := openBlocklist(opt.pinDir)
+	if err != nil {
+		return err
+	}
+	defer blCloser.Close()
+
+	var mit *mitigate.Mitigator
+
+	if opt.block {
+		if mit, err = mitigate.New(mcfg, bl); err != nil {
+			return err
+		}
+	}
+
 	// CLOCK_TAI is ahead of the wall clock by a whole number of leap
 	// seconds, or by zero when the kernel's TAI offset was never set.
 	taiOffset := clock().Sub(time.Now()).Round(time.Second)
 
-	s, err := newSession(opt, wcfg, dcfg, src, clock, taiOffset)
+	s, err := newSession(opt, wcfg, dcfg, src, mit, clock, taiOffset)
 	if err != nil {
 		return err
 	}
@@ -375,10 +502,14 @@ func runKernel(opt options, wcfg window.Config, dcfg detector.Config) error {
 		FinishedAt: finished,
 		EndReason:  endReason,
 		Source:     "xdp",
-		Config:     runConfig(wcfg, dcfg),
+		Config:     runConfig(wcfg, dcfg, mcfg, opt.block),
 		Live:       info,
 		Stats:      s.stats,
 		Notes:      []string{report.TimingNote, report.ResourceNote, report.SentPacketsNote},
+	}
+
+	if opt.block {
+		run.Notes = append(run.Notes, report.BlocklistNote)
 	}
 
 	if err := report.WriteRun(opt.outDir, run, opt.force); err != nil {
@@ -413,8 +544,8 @@ func prepareOutput(dir string, force bool) error {
 	return nil
 }
 
-func runConfig(w window.Config, d detector.Config) report.Config {
-	return report.Config{
+func runConfig(w window.Config, d detector.Config, m mitigate.Config, block bool) report.Config {
+	c := report.Config{
 		WindowLength: w.Length.String(),
 		Mode:         d.Mode.String(),
 
@@ -432,7 +563,20 @@ func runConfig(w window.Config, d detector.Config) report.Config {
 
 		IPMode:               d.IQR.IPMode.String(),
 		MaxSharedHistorySize: d.IQR.MaxSharedHistorySize,
+
+		Block: block,
 	}
+
+	if block {
+		c.BlockTTL = m.TTL.String()
+		c.BlockCapacity = m.Capacity
+
+		for _, k := range m.Allow {
+			c.BlockAllow = append(c.BlockAllow, k.String())
+		}
+	}
+
+	return c
 }
 
 func printSummary(r *report.Run) {
@@ -456,6 +600,15 @@ func printSummary(r *report.Run) {
 	log.Printf("  behind:   %d windows discarded, %d jumps over %d epochs", s.Window.Discarded, s.Window.Jumps, s.Window.SkippedEpochs)
 	log.Printf("  sources:  %d flagged IP rows, %d tracked, %d evicted (ip mode %s)",
 		s.FlaggedIPRows, s.TrackedIPs, s.EvictedIPs, r.Config.IPMode)
+
+	if b := s.Blocklist; b != nil {
+		log.Printf("  blocked:  %d packets dropped; %d sources blocked, %d refreshed, %d expired, %d evicted, %d active at end (peak %d)",
+			s.BlockedPackets, b.Blocked, b.Refreshed, b.Expired, b.Evicted, b.Active, b.Peak)
+
+		if b.Errors > 0 {
+			log.Printf("warning: %d blocklist operations failed; see the log above", b.Errors)
+		}
+	}
 
 	// The start window is always discarded; more means the detector
 	// could not keep up.

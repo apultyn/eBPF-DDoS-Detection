@@ -42,6 +42,7 @@ type closedWindow struct {
 	skipped    int64
 	packets    uint64
 	bytes      uint64
+	blocked    uint64
 	candidates []heavykeeper.TopKEntry
 	prev       epoch.Epoch // -1 when there was no Prev
 	countA     uint64
@@ -65,6 +66,7 @@ func (r *recorder) onClose(c Closed) error {
 		skipped:    w.SkippedBefore,
 		packets:    w.Packets,
 		bytes:      w.Bytes,
+		blocked:    w.BlockedPackets,
 		candidates: w.Candidates(),
 		prev:       -1,
 	}
@@ -198,6 +200,34 @@ func TestTick_ReadsEachWindowFromItsSlot(t *testing.T) {
 		}
 		if len(c.candidates) == 0 || c.candidates[0].Item != ipA {
 			t.Errorf("epoch %d: candidates %v, want ipA first", e, c.candidates)
+		}
+	}
+}
+
+// Blocked traffic is read from the window's own slot, kept apart from
+// its totals, and gone when the slot is reused.
+func TestTick_ReadsBlockedTrafficFromItsSlot(t *testing.T) {
+	a, src, r, clk := newTestAggregator(t)
+
+	if err := clk.tick(a, at(first, 0)); err != nil {
+		t.Fatal(err)
+	}
+
+	run(t, a, clk, src, first, first+1+heavykeeper.Slots, func(e epoch.Epoch, slot int) {
+		src.Add(slot, ipB, 1, 60)
+		if e == first+1 {
+			src.AddBlocked(slot, 40, 4000)
+		}
+	})
+
+	for _, c := range r.closed {
+		want := uint64(0)
+		if c.epoch == first+1 {
+			want = 40
+		}
+
+		if c.blocked != want || c.packets != 1 {
+			t.Errorf("epoch %d: %d blocked, %d packets; want %d, 1", c.epoch, c.blocked, c.packets, want)
 		}
 	}
 }
