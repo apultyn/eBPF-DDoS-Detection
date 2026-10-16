@@ -170,14 +170,14 @@ struct { // Top k map for buffer 3
     __uint(pinning, LIBBPF_PIN_BY_NAME); // Pin filepath ending to struct name
 } topk_map_3 SEC(".maps");
 
-struct slot_stats { u64 packets; u64 bytes; };
+struct slot_stats { __u64 packets; __u64 bytes; };
 
 struct {
-    uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
-    uint(max_entries, SLOTS);
-    type(key, u32);
-    type(value, struct slot_stats);
-    uint(pinning, LIBBPF_PIN_BY_NAME);
+    __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+    __uint(max_entries, SLOTS);
+    __type(key, __u32);
+    __type(value, struct slot_stats);
+    __uint(pinning, LIBBPF_PIN_BY_NAME);
 } slot_stats SEC(".maps");
 
 
