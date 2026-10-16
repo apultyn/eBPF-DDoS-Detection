@@ -4,18 +4,20 @@
 // - In other words, this program will run per packet
 
 // --------- Commands --------- //
-//  1. Compile Code: clang -O2 -g -target bpf -I/usr/include/$(uname -m)-linux-gnu -c heavy_keeper.c -o heavy_keeper.o
+// 1. Compile Code: clang -O2 -g -target bpf -I/usr/include/$(uname -m)-linux-gnu -c heavy_keeper.c -o heavy_keeper.o
 // - g: Generate debug information flag
 // - O2: Aggressive compilation flag
 // - I: Header Path
-// 2.  Attach to Network Interface: sudo ip link set dev enp3s0 xdpgeneric obj heavy_keeper.o sec xdp
-// 3.  Show Attached Links: ip link show
-// 4.  Expose Filepath for Userspace Programs: sudo bpftool map pin name data_sketch_map /sys/fs/bpf/heavy_keeper_map
-// 5.  Expose Filepath for Userspace Programs: sudo bpftool map pin name blocklist_map /sys/fs/bpf/blocklist_map 
-// 6.  Read From Debug Tracepipe: sudo cat /sys/kernel/debug/tracing/trace_pipe
-// 7.  List all buckets with count < 0: sudo bpftool map dump pinned /sys/fs/bpf/heavy_keeper_map | awk -v RS='}' '/"count": [1-9]/ { print $0 "}" }'
-// 8.  Detatch from Network Interface: sudo ip link set dev enp3s0 xdpgeneric off
-// 9.  Delete Heavy Keeper Map: sudo rm -f /sys/fs/bpf/heavy_keeper_map
+// 2. Attach to Network Interface: sudo ip link set dev enp3s0 xdpgeneric obj heavy_keeper.o sec xdp
+// 3. Show Attached Links: ip link show
+// 4. Expose Filepath for Userspace Programs:
+// ¤ sudo bpftool map pin name data_sketch_map_0 /sys/fs/bpf/heavy_keeper_map
+// ¤ sudo bpftool map pin name data_sketch_map_1 /sys/fs/bpf/heavy_keeper_map
+// 5. Expose Filepath for Userspace Programs: sudo bpftool map pin name blocklist_map /sys/fs/bpf/blocklist_map
+// 6. Read From Debug Tracepipe: sudo cat /sys/kernel/debug/tracing/trace_pipe
+// 7. List all buckets with count < 0: sudo bpftool map dump pinned /sys/fs/bpf/heavy_keeper_map | awk -v RS='}' '/"count": [1-9]/ { print $0 "}" }'
+// 8. Detatch from Network Interface: sudo ip link set dev enp3s0 xdpgeneric off
+// 9. Delete Heavy Keeper Map: sudo rm -f /sys/fs/bpf/heavy_keeper_map
 // 10. Delete Blocklist: sudo rm -f /sys/fs/bpf/blocklist_map
 
 // -------- Information -------- //
@@ -44,13 +46,17 @@
 
 // ------- Definitions ------- //
 #define FINGERPRINT_SEED 0x75a2e345
+#define WINDOW_NS (1ULL << 29)   // 536 870 912 ns, ca 0,54 s
+#define SLOTS 4
+#define SLOT_MASK (SLOTS - 1)
 
 // ¤ HeavyKeeper Tuning Parameters
-#define DEPTH 4
-#define WIDTH 1024
+#define DEPTH 3
+#define WIDTH 65536
 #define MASK (WIDTH - 1)
 #define TOTAL_BUCKETS (DEPTH * WIDTH)
 #define DECAY_THRESHOLD 64
+#define K_SIZE 32
 
 // -------- Constants -------- //
 
@@ -86,18 +92,76 @@ struct bucket
 struct { // Data structure to store IP blocklist (modified from userspace)
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 1000);           // Max number of blocked IP addresses
-    __type(key, struct in6_addr); 
+    __type(key, struct in6_addr);
     __type(value, __u8);
     __uint(pinning, LIBBPF_PIN_BY_NAME); // Pin filepath ending to struct name
 } blocklist_map SEC(".maps");
 
-struct
+struct // Buffer 0
 {
     __uint(type, BPF_MAP_TYPE_ARRAY);   // Allocate data structure as a fixed-size contiguous array
     __uint(max_entries, TOTAL_BUCKETS); // Number of addressable cells
     __type(key, __u32);                 // Flattened index: (row * WIDTH) + bucket_index
     __type(value, struct bucket);       // What each cell contains
-} data_sketch_map SEC(".maps");
+} sketch_0 SEC(".maps");
+
+struct // Buffer 1
+{
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __type(key, __u32);
+    __type(value, struct bucket);
+    __uint(max_entries, TOTAL_BUCKETS);
+} sketch_1 SEC(".maps");
+
+struct // Buffer 2
+{
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, TOTAL_BUCKETS);
+    __type(key, __u32);
+    __type(value, struct bucket);
+} sketch_2 SEC(".maps");
+
+struct // Buffer 3
+{
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __type(key, __u32);
+    __type(value, struct bucket);
+    __uint(max_entries, TOTAL_BUCKETS);
+} sketch_3 SEC(".maps");
+
+struct topk_entry {
+    struct in6_addr ip;
+    __u32 count;
+};
+
+struct { // Top K map for buffer 0
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, K_SIZE);
+    __type(key, __u32);
+    __type(value, struct topk_entry);
+} topk_map_0 SEC(".maps");
+
+struct { // Top K map for buffer 1
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, K_SIZE);
+    __type(key, __u32);
+    __type(value, struct topk_entry);
+} topk_map_1 SEC(".maps");
+
+struct { // Top k map for buffer 2
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, K_SIZE);
+    __type(key, __u32);
+    __type(value, struct topk_entry);
+} topk_map_2 SEC(".maps");
+
+struct { // Top k map for buffer 3
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, K_SIZE);
+    __type(key, __u32);
+    __type(value, struct topk_entry);
+} topk_map_3 SEC(".maps");
+
 
 // ----- Helper Functions ----- //
 
@@ -233,14 +297,95 @@ static __always_inline int decay(__u32 count, __u32 random_value)
     return random_sample < DECAY_TABLE[count]; // return 0 for large flows, returns 1 for small flows
 }
 
+// Helper to compare two IPv6 addresses
+// ¤ Returns 1 if they're the same
+// ¤ Returns 0 if they're different
+static __always_inline int ipv6_equal(const struct in6_addr *a, const struct in6_addr *b)
+{
+    return (a->s6_addr32[0] == b->s6_addr32[0] &&
+            a->s6_addr32[1] == b->s6_addr32[1] &&
+            a->s6_addr32[2] == b->s6_addr32[2] &&
+            a->s6_addr32[3] == b->s6_addr32[3]);
+}
+
+// Update Top-K tracking for the active window
+static __always_inline void update_topk(const struct in6_addr *ip, __u32 estimated_count, int sketch_index)
+{
+    // Variable declarations
+    __u32 min_idx = 0;          // Initial declaration for the bucket index with lowest count among Top-K list
+    __u32 min_val = 0xFFFFFFFF; // Initial declaration for value of lowest count among Top-K list
+
+    // 
+    #pragma unroll
+    for (__u32 i = 0; i < K_SIZE; i++) {
+        __u32 topk_index = i;
+        struct topk_entry *entry = NULL;
+
+        // Iterate through current window Top-K list
+        // ¤ Note that we only iterate through one of the Top-K maps
+        if (sketch_index == 0)
+            entry = bpf_map_lookup_elem(&topk_map_0, &topk_index);
+        else if (sketch_index == 1)
+            entry = bpf_map_lookup_elem(&topk_map_1, &topk_index);
+        else if (sketch_index == 2)
+            entry = bpf_map_lookup_elem(&topk_map_2, &topk_index);
+        else if (sketch_index == 3)
+            entry = bpf_map_lookup_elem(&topk_map_3, &topk_index);
+
+        // This is added to satisfy eBPF verifier
+        // ¤ If the bpf_map_lookup_elem finds no element it returns a nullpointer
+        if (!entry)
+            continue;
+
+        // If a Top-K entry was found to match incomming IP, we update it to its newly updated estimated count
+        if ((entry->count > 0) && (ipv6_equal(&entry->ip, ip))) {
+            entry->count = estimated_count;
+            return;
+        }
+
+        // If an empty Top-K entry was found, we populate it immediately
+        if (entry->count == 0) {
+            entry->ip = *ip;
+            entry->count = estimated_count;
+            return;
+        }
+
+        // Find smallest entry in Top-K list
+        if (entry->count < min_val) {
+            min_val = entry->count;
+            min_idx = idx;
+        }
+    }
+
+    // If new count exceeds the minimum entry in the top-K table, replace it
+    if (estimated_count > min_val) {
+        struct topk_entry *min_entry = NULL;
+
+        if (sketch_index == 0)
+            min_entry = bpf_map_lookup_elem(&topk_map_0, &min_idx);
+        else if (sketch_index == 1)
+            min_entry = bpf_map_lookup_elem(&topk_map_1, &min_idx);
+        else if (sketch_index == 2)
+            min_entry = bpf_map_lookup_elem(&topk_map_2, &min_idx);
+        else if (sketch_index == 3)
+            min_entry = bpf_map_lookup_elem(&topk_map_3, &min_idx);
+
+        if (min_entry) {
+            min_entry->ip = *ip;
+            min_entry->count = estimated_count;
+        }
+    }
+}
+
 // Helper function that updates the HeavyKeeper sketch across all rows called on each parsed packet
-static __always_inline void update(const struct in6_addr *ip)
+static __always_inline void update(const struct in6_addr *ip, int sketch_index)
 {
     // Compute fingerprint for specific IP address
     __u32 fp_raw = hash32(ip, FINGERPRINT_SEED);
     __u16 fp = (__u16)(fp_raw ^ (fp_raw >> 16)); // Take lower 16 bits to match bitsize
     if (fp == 0)
         fp = 1; // Reserve 0 for empty slots
+    __u32 estimated_count = 0;
 
 // Iterate through all rows
 #pragma unroll
@@ -252,7 +397,17 @@ static __always_inline void update(const struct in6_addr *ip)
 
         // Lookup cell in data sketch map
         // ¤ We return a pointer to a bucket struct
-        struct bucket *b = bpf_map_lookup_elem(&data_sketch_map, &flat_index);
+        struct bucket *b = NULL;
+        if (sketch_index == 0) {
+                b = bpf_map_lookup_elem(&sketch_0, &flat_index);
+        } else if (sketch_index == 1) {
+                b = bpf_map_lookup_elem(&sketch_1, &flat_index);
+        } else if (sketch_index == 2) {
+                b = bpf_map_lookup_elem(&sketch_2, &flat_index);
+        } else if (sketch_index == 3) {
+                b = bpf_map_lookup_elem(&sketch_3, &flat_index);
+        };
+
         if (!b)  // Satisfy verifier null-pointer check (this should never occur)
             continue;
 
@@ -262,6 +417,8 @@ static __always_inline void update(const struct in6_addr *ip)
         {
             b->fp = fp;
             b->count = 1;
+            if (estimated_count == 0)
+                estimated_count = 1;
             continue;
         }
 
@@ -270,6 +427,8 @@ static __always_inline void update(const struct in6_addr *ip)
         if (b->fp == fp)
         {
             __sync_fetch_and_add(&b->count, 1); // Atomic fetch and add
+            if (b->count > estimated_count)
+                estimated_count = b->count;
             continue;
         }
 
@@ -288,9 +447,25 @@ static __always_inline void update(const struct in6_addr *ip)
             {
                 b->fp = fp;
                 b->count = 1;
+                if (estimated_count == 0)
+                    estimated_count = 1;
             }
         }
     }
+
+    // Update Top-K if this flow has a confirmed estimate
+    if (estimated_count > 0) {
+        update_topk(ip, estimated_count, sketch_index);
+    }
+}
+
+// Helper function to get sketch index based on current time
+// ¤ Note that userspace implementation can run the exact same calculation on packet timestamps to get same result
+static __always_inline int get_sketch_index()
+{
+    __u64 epoch = (bpf_ktime_get_tai_ns() >> 29);
+    __u32 index = epoch & SLOT_MASK;
+    return index;
 }
 
 
@@ -311,8 +486,7 @@ int heavy_keeper(struct xdp_md *ctx)
         return XDP_DROP;
     }
 
+    int sketch_index = get_sketch_index();
     // Hash IP, decay and add to corresponding bucket
-    update(&unified_ip);
-
-    return XDP_PASS;
+    update(&unified_ip, sketch_index);
 }
