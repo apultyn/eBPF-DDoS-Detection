@@ -103,6 +103,7 @@ struct // Buffer 0
     __uint(max_entries, TOTAL_BUCKETS); // Number of addressable cells
     __type(key, __u32);                 // Flattened index: (row * WIDTH) + bucket_index
     __type(value, struct bucket);       // What each cell contains
+    __uint(pinning, LIBBPF_PIN_BY_NAME); // Pin filepath ending to struct name
 } sketch_0 SEC(".maps");
 
 struct // Buffer 1
@@ -111,6 +112,7 @@ struct // Buffer 1
     __type(key, __u32);
     __type(value, struct bucket);
     __uint(max_entries, TOTAL_BUCKETS);
+    __uint(pinning, LIBBPF_PIN_BY_NAME); // Pin filepath ending to struct name
 } sketch_1 SEC(".maps");
 
 struct // Buffer 2
@@ -119,6 +121,7 @@ struct // Buffer 2
     __uint(max_entries, TOTAL_BUCKETS);
     __type(key, __u32);
     __type(value, struct bucket);
+    __uint(pinning, LIBBPF_PIN_BY_NAME); // Pin filepath ending to struct name
 } sketch_2 SEC(".maps");
 
 struct // Buffer 3
@@ -127,6 +130,7 @@ struct // Buffer 3
     __type(key, __u32);
     __type(value, struct bucket);
     __uint(max_entries, TOTAL_BUCKETS);
+    __uint(pinning, LIBBPF_PIN_BY_NAME); // Pin filepath ending to struct name
 } sketch_3 SEC(".maps");
 
 struct topk_entry {
@@ -139,6 +143,7 @@ struct { // Top K map for buffer 0
     __uint(max_entries, K_SIZE);
     __type(key, __u32);
     __type(value, struct topk_entry);
+    __uint(pinning, LIBBPF_PIN_BY_NAME); // Pin filepath ending to struct name
 } topk_map_0 SEC(".maps");
 
 struct { // Top K map for buffer 1
@@ -146,6 +151,7 @@ struct { // Top K map for buffer 1
     __uint(max_entries, K_SIZE);
     __type(key, __u32);
     __type(value, struct topk_entry);
+    __uint(pinning, LIBBPF_PIN_BY_NAME); // Pin filepath ending to struct name
 } topk_map_1 SEC(".maps");
 
 struct { // Top k map for buffer 2
@@ -153,6 +159,7 @@ struct { // Top k map for buffer 2
     __uint(max_entries, K_SIZE);
     __type(key, __u32);
     __type(value, struct topk_entry);
+    __uint(pinning, LIBBPF_PIN_BY_NAME); // Pin filepath ending to struct name
 } topk_map_2 SEC(".maps");
 
 struct { // Top k map for buffer 3
@@ -160,6 +167,7 @@ struct { // Top k map for buffer 3
     __uint(max_entries, K_SIZE);
     __type(key, __u32);
     __type(value, struct topk_entry);
+    __uint(pinning, LIBBPF_PIN_BY_NAME); // Pin filepath ending to struct name
 } topk_map_3 SEC(".maps");
 
 
@@ -353,7 +361,7 @@ static __always_inline void update_topk(const struct in6_addr *ip, __u32 estimat
         // Find smallest entry in Top-K list
         if (entry->count < min_val) {
             min_val = entry->count;
-            min_idx = idx;
+            min_idx = i;
         }
     }
 
@@ -489,4 +497,6 @@ int heavy_keeper(struct xdp_md *ctx)
     int sketch_index = get_sketch_index();
     // Hash IP, decay and add to corresponding bucket
     update(&unified_ip, sketch_index);
+    
+    return XDP_PASS;
 }
