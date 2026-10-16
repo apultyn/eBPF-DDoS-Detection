@@ -1,294 +1,210 @@
 package main
 
 import (
-	"io"
-	"sync/atomic"
+	"errors"
 	"testing"
 	"time"
 
-	"github.com/apultyn/eBPF-DDoS-Detection/userspace/capture"
-	"github.com/apultyn/eBPF-DDoS-Detection/userspace/epoch"
-	"github.com/apultyn/eBPF-DDoS-Detection/userspace/flow"
-	"github.com/apultyn/eBPF-DDoS-Detection/userspace/report"
-	"github.com/apultyn/eBPF-DDoS-Detection/userspace/window"
+	"github.com/apultyn/eBPF-DDoS-Detection/kernelspace/epoch"
+	"github.com/apultyn/eBPF-DDoS-Detection/kernelspace/report"
+	"github.com/apultyn/eBPF-DDoS-Detection/kernelspace/window"
+	"github.com/apultyn/eBPF-DDoS-Detection/kernelspace/window/memsource"
 )
 
 const length = epoch.DefaultLength
 
-// t0 lies on a window boundary.
-var t0 = time.Unix(1_700_000_000, 0)
+// first is the epoch the simulated run starts in.
+const first epoch.Epoch = 5_000_001
 
-var src = flow.MustParse("192.0.2.1")
-
-// fakeLive simulates a live socket on a simulated clock. Packets arrive
-// at scripted times; a read returns the next packet if it arrives before
-// the deadline, and otherwise moves the clock to the deadline and times
-// out. Once the clock reaches closeAt the source behaves as if Ctrl-C
-// had closed it.
-type fakeLive struct {
-	arrivals []time.Time
-	next     int
-
-	now      time.Time
-	deadline time.Time
-	closeAt  time.Time
-
-	deadlineCalls int
+// fakeClock is a simulated CLOCK_TAI. wait advances it instead of
+// sleeping, and reports an interrupt once it reaches interruptAt.
+type fakeClock struct {
+	now         time.Time
+	interruptAt time.Time
+	waits       []time.Duration
 }
 
-func (f *fakeLive) clock() time.Time { return f.now }
+func (f *fakeClock) clock() time.Time { return f.now }
 
-func (f *fakeLive) SetDeadline(t time.Time) error {
-	f.deadline = t
-	f.deadlineCalls++
-	return nil
+func (f *fakeClock) wait(d time.Duration) bool {
+	f.waits = append(f.waits, d)
+
+	if !f.interruptAt.IsZero() && !f.now.Add(d).Before(f.interruptAt) {
+		f.now = f.interruptAt
+		return false
+	}
+
+	f.now = f.now.Add(d)
+
+	return true
 }
-
-func (f *fakeLive) Next() (capture.Packet, error) {
-	if f.next < len(f.arrivals) {
-		at := f.arrivals[f.next]
-
-		if f.deadline.IsZero() || at.Before(f.deadline) {
-			f.now = at
-			f.next++
-			return capture.Packet{Src: src, Timestamp: at, Length: 100}, nil
-		}
-	}
-
-	if !f.closeAt.IsZero() && !f.deadline.Before(f.closeAt) {
-		f.now = f.closeAt
-		return capture.Packet{}, capture.ErrClosed
-	}
-
-	if f.deadline.IsZero() {
-		return capture.Packet{}, capture.ErrClosed
-	}
-
-	f.now = f.deadline
-
-	return capture.Packet{}, capture.ErrTimeout
-}
-
-func (f *fakeLive) Stats() capture.Stats { return capture.Stats{} }
-func (f *fakeLive) Close() error         { return nil }
 
 // closing records when each window was closed on the simulated clock.
 type closing struct {
-	epoch   epoch.Epoch
-	at      time.Time
-	packets uint64
-	skipped int64
+	epoch epoch.Epoch
+	at    time.Time
 }
 
-func newLoop(t *testing.T, f *fakeLive, cfg window.Config) (*loop, *[]closing) {
+type testRun struct {
+	f      *fakeClock
+	src    *memsource.Source
+	agg    *window.Aggregator
+	l      *loop
+	closed []closing
+
+	// onClose, if set, runs inside the callback, e.g. to make the
+	// evaluation slow.
+	onClose func()
+}
+
+// newTestRun starts the simulated clock a third of the way into first.
+func newTestRun(t *testing.T) *testRun {
 	t.Helper()
 
-	// The simulated clock starts at t0, as a real one would be near the
-	// first packet.
-	if f.now.IsZero() {
-		f.now = t0
+	r := &testRun{
+		f:   &fakeClock{now: first.Start(length).Add(length / 3)},
+		src: memsource.New(),
 	}
 
-	var closed []closing
+	var err error
 
-	agg, err := window.NewAggregator(cfg, func(c window.Closed) {
-		closed = append(closed, closing{c.Window.Epoch, f.now, c.Window.Packets, c.Window.SkippedBefore})
+	r.agg, err = window.NewAggregator(window.DefaultConfig(), r.src, r.f.clock, func(c window.Closed) error {
+		r.closed = append(r.closed, closing{c.Window.Epoch, r.f.now})
+		if r.onClose != nil {
+			r.onClose()
+		}
+		return nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	l := &loop{
-		agg:    agg,
-		stop:   &atomic.Bool{},
-		failed: func() error { return nil },
-		tick:   func() {},
-	}
+	r.l = &loop{agg: r.agg, clock: r.f.clock, wait: r.f.wait, tick: func() {}}
 
-	return l, &closed
+	return r
 }
 
-func liveConfig() window.Config {
-	cfg := window.DefaultConfig()
-	cfg.MaxEmpty = window.LiveMaxEmpty
+func TestLoop_ClosesEachWindowAfterTheGracePeriod(t *testing.T) {
+	r := newTestRun(t)
+	r.f.interruptAt = (first + 4).Start(length).Add(length / 2)
 
-	return cfg
-}
-
-// every returns arrival times from from to to (exclusive) at the given
-// spacing, as offsets from t0.
-func every(from, to, step time.Duration) []time.Time {
-	var out []time.Time
-	for d := from; d < to; d += step {
-		out = append(out, t0.Add(d))
-	}
-	return out
-}
-
-func TestLive_ClosesQuietWindowsOnTime(t *testing.T) {
-	f := &fakeLive{
-		arrivals: every(0, 400*time.Millisecond, 10*time.Millisecond),
-		closeAt:  t0.Add(3*length + length/2),
-	}
-
-	l, closed := newLoop(t, f, liveConfig())
-
-	reason, err := l.live(f, time.Time{}, f.clock)
+	reason, err := r.l.run(time.Time{})
 	if err != nil || reason != report.EndInterrupted {
-		t.Fatalf("live = %q, %v; want interrupted", reason, err)
+		t.Fatalf("run = %q, %v; want interrupted", reason, err)
 	}
 
-	// Traffic only in window 0; windows 0, 1 and 2 have ended before the
-	// source closes in the middle of window 3.
-	if len(*closed) != 3 {
-		t.Fatalf("closed %d windows, want 3", len(*closed))
+	// The start window is discarded; first+1 .. first+3 have ended before
+	// the interrupt in the middle of first+4.
+	if len(r.closed) != 3 {
+		t.Fatalf("closed %+v, want epochs %d to %d", r.closed, first+1, first+3)
 	}
 
-	for i, c := range *closed {
-		end := t0.Add(time.Duration(i+1) * length)
+	for i, c := range r.closed {
+		e := first + 1 + epoch.Epoch(i)
 
-		// With no packet after it, a window closes on the deadline: its
-		// end plus the grace period, not earlier and not later.
-		if want := end.Add(liveGrace); !c.at.Equal(want) {
-			t.Errorf("window %d closed at %v, want %v", i, c.at.Sub(t0), want.Sub(t0))
+		if c.epoch != e {
+			t.Errorf("window %d: epoch %d, want %d", i, c.epoch, e)
 		}
 
-		if c.skipped != 0 {
-			t.Errorf("window %d: live capture jumped over %d epochs", i, c.skipped)
-		}
-	}
-
-	if (*closed)[0].packets != 40 || (*closed)[1].packets != 0 {
-		t.Errorf("packets = %d, %d; want 40, 0", (*closed)[0].packets, (*closed)[1].packets)
-	}
-}
-
-func TestLive_TrafficClosesWindowsWithoutWaiting(t *testing.T) {
-	f := &fakeLive{
-		arrivals: every(0, 2*time.Second, 5*time.Millisecond),
-		closeAt:  t0.Add(2 * time.Second),
-	}
-
-	l, closed := newLoop(t, f, liveConfig())
-	l.live(f, time.Time{}, f.clock)
-
-	// Each window closes on the first packet of the next one, without the
-	// grace period.
-	for i, c := range (*closed)[:3] {
-		if want := t0.Add(time.Duration(i+1) * length); !c.at.Equal(want) {
-			t.Errorf("window %d closed at %v, want %v", i, c.at.Sub(t0), want.Sub(t0))
+		// Not earlier, so the last packets have landed, and not later, so
+		// detection is not delayed.
+		if want := e.End(length).Add(grace); !c.at.Equal(want) {
+			t.Errorf("epoch %d closed %v after its end, want %v", e, c.at.Sub(e.End(length)), grace)
 		}
 	}
 
-	// About two deadline changes per second of capture, not one per packet.
-	if f.deadlineCalls > 10 {
-		t.Errorf("deadline set %d times for 400 packets", f.deadlineCalls)
+	if st := r.agg.Stats(); st.Discarded != 1 || st.Jumps != 0 {
+		t.Errorf("Stats = %+v, want only the start window discarded", st)
 	}
 }
 
-func TestLive_DurationEndsRun(t *testing.T) {
-	tests := []struct {
-		name     string
-		arrivals []time.Time
-	}{
-		{"with traffic", every(0, 5*time.Second, 10*time.Millisecond)},
-		{"in silence", every(0, 100*time.Millisecond, 10*time.Millisecond)},
+func TestLoop_DurationEndsRun(t *testing.T) {
+	r := newTestRun(t)
+	end := r.f.now.Add(2 * time.Second)
+
+	reason, err := r.l.run(end)
+	if err != nil || reason != report.EndDurationReached {
+		t.Fatalf("run = %q, %v; want duration_reached", reason, err)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			f := &fakeLive{arrivals: tt.arrivals}
-			l, closed := newLoop(t, f, liveConfig())
+	if r.f.now.After(end) {
+		t.Errorf("run ended %v after the duration", r.f.now.Sub(end))
+	}
 
-			end := t0.Add(2 * time.Second)
-
-			reason, err := l.live(f, end, f.clock)
-			if err != nil || reason != report.EndDurationReached {
-				t.Fatalf("live = %q, %v; want duration_reached", reason, err)
-			}
-
-			if f.now.After(end) {
-				t.Errorf("run ended at %v, after the duration", f.now.Sub(t0))
-			}
-
-			// Windows ending at or before 1.5 s are closed; the one ending at
-			// 2 s is the incomplete last window.
-			if len(*closed) != 3 {
-				t.Errorf("closed %d windows, want 3", len(*closed))
-			}
-		})
+	// Every window that ended before end was closed.
+	for _, c := range r.closed {
+		if c.epoch.End(length).After(end) {
+			t.Errorf("epoch %d closed although it ends after the run", c.epoch)
+		}
+	}
+	if last := r.closed[len(r.closed)-1].epoch; last.End(length).Add(length).Before(end) {
+		t.Errorf("last closed epoch %d; a later one also ended before the run did", last)
 	}
 }
 
-func TestLive_StopFlagEndsRun(t *testing.T) {
-	f := &fakeLive{arrivals: every(0, time.Second, 10*time.Millisecond)}
-	l, _ := newLoop(t, f, liveConfig())
+func TestLoop_InterruptBeforeFirstDeadline(t *testing.T) {
+	r := newTestRun(t)
+	r.f.interruptAt = r.f.now.Add(time.Millisecond)
 
-	l.stop.Store(true)
-
-	if reason, _ := l.live(f, time.Time{}, f.clock); reason != report.EndInterrupted {
+	if reason, _ := r.l.run(time.Time{}); reason != report.EndInterrupted {
 		t.Errorf("reason = %q, want interrupted", reason)
 	}
-}
-
-func TestLive_WaitsBeforeFirstPacket(t *testing.T) {
-	// Nothing arrives for 3.2 s. Reads must still time out regularly so
-	// an interrupt is noticed, but no window exists to close yet.
-	f := &fakeLive{
-		arrivals: every(3200*time.Millisecond, 3300*time.Millisecond, 10*time.Millisecond),
-		closeAt:  t0.Add(4 * time.Second),
-	}
-
-	l, closed := newLoop(t, f, liveConfig())
-	l.live(f, time.Time{}, f.clock)
-
-	if len(*closed) == 0 || (*closed)[0].epoch != epoch.Of(t0.Add(3200*time.Millisecond), length) {
-		t.Errorf("first window = %+v, want the one the first packet fell in", *closed)
-	}
-
-	if f.deadlineCalls < 3 {
-		t.Errorf("deadline set %d times while idle, want a poll about every %v", f.deadlineCalls, idlePoll)
+	if len(r.closed) != 0 {
+		t.Errorf("closed %+v before any window ended", r.closed)
 	}
 }
 
-// sliceSource replays fixed packets and then ends, like a trace file.
-type sliceSource struct {
-	packets []capture.Packet
+func TestLoop_NeverSleepsLongerThanIdlePoll(t *testing.T) {
+	r := newTestRun(t)
+	r.f.interruptAt = r.f.now.Add(5 * time.Second)
+
+	r.l.run(time.Time{})
+
+	for _, d := range r.f.waits {
+		if d > idlePoll || d <= 0 {
+			t.Fatalf("waited %v; want 0 < wait <= %v", d, idlePoll)
+		}
+	}
 }
 
-func (s *sliceSource) Next() (capture.Packet, error) {
-	if len(s.packets) == 0 {
-		return capture.Packet{}, io.EOF
+// An evaluation slower than a window makes the loop wake up late. The
+// aggregator then discards the window whose slot was cleared too late,
+// and the loop carries on on time afterwards.
+func TestLoop_RecoversFromASlowEvaluation(t *testing.T) {
+	r := newTestRun(t)
+	r.f.interruptAt = (first + 10).Start(length).Add(length / 2)
+
+	slowed := false
+	r.onClose = func() {
+		if !slowed {
+			slowed = true
+			r.f.now = r.f.now.Add(length + length/2)
+		}
 	}
 
-	p := s.packets[0]
-	s.packets = s.packets[1:]
+	if reason, err := r.l.run(time.Time{}); err != nil || reason != report.EndInterrupted {
+		t.Fatalf("run = %q, %v; want interrupted", reason, err)
+	}
 
-	return p, nil
+	st := r.agg.Stats()
+	if st.Discarded != 2 || st.Jumps != 0 {
+		t.Errorf("Stats = %+v, want the start window and one late window discarded, no jump", st)
+	}
+
+	last := r.closed[len(r.closed)-1]
+	if want := last.epoch.End(length).Add(grace); !last.at.Equal(want) {
+		t.Errorf("after recovering, epoch %d closed at +%v, want on time", last.epoch, last.at.Sub(last.epoch.End(length)))
+	}
 }
 
-func (s *sliceSource) Stats() capture.Stats { return capture.Stats{} }
-func (s *sliceSource) Close() error         { return nil }
+func TestLoop_MapErrorEndsRun(t *testing.T) {
+	r := newTestRun(t)
 
-func TestTrace_EndReasons(t *testing.T) {
-	packets := []capture.Packet{
-		{Src: src, Timestamp: t0},
-		{Src: src, Timestamp: t0.Add(length)},
-	}
+	boom := errors.New("map read failed")
+	r.onClose = func() { r.src.Err = boom }
 
-	l, closed := newLoop(t, &fakeLive{}, window.DefaultConfig())
-
-	if reason, err := l.trace(&sliceSource{packets}); err != nil || reason != report.EndSourceEnded {
-		t.Errorf("trace = %q, %v; want source_ended", reason, err)
-	}
-	if len(*closed) != 1 {
-		t.Errorf("closed %d windows, want 1", len(*closed))
-	}
-
-	l, _ = newLoop(t, &fakeLive{}, window.DefaultConfig())
-	l.stop.Store(true)
-
-	if reason, _ := l.trace(&sliceSource{packets}); reason != report.EndInterrupted {
-		t.Errorf("reason = %q, want interrupted", reason)
+	reason, err := r.l.run(time.Time{})
+	if reason != report.EndError || !errors.Is(err, boom) {
+		t.Errorf("run = %q, %v; want error %v", reason, err, boom)
 	}
 }

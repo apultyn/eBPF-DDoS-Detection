@@ -5,21 +5,19 @@ package detector
 //
 // One host that has behaved normally sends a burst of extra packets. The
 // burst is placed either entirely inside one window, or split 50/50 across
-// a boundary. Each placement is run in both evaluation modes and with both
-// count sources, and the attacker's counts and per-IP thresholds in the
-// attack windows are reported. Each verdict also records whether its
-// threshold came from the quartiles or from the BaseThreshold floor.
+// a boundary. Each placement is run in both evaluation modes, and the
+// attacker's counts and per-IP thresholds in the attack windows are
+// reported. Each verdict also records whether its threshold came from the
+// quartiles or from the BaseThreshold floor.
 //
-// Two traffic mixes are used. In "sparse" every flow has a bucket of its
-// own, so both count sources are exact and only the window logic is
-// tested. In "crowded" thousands of extra flows compete for buckets, which
-// is where HeavyKeeper's underestimates and Count-Min's overestimates
-// show up.
+// The counts are exact, as if the kernel sketch made no error, so only the
+// window logic is tested. How the kernel sketch's estimates affect the
+// result can only be measured on a live interface.
 //
 // Run with -v to print the table, and pass an absolute path to also write
 // it as CSV:
 //
-//	go test ./userspace/detector -run TestSeam -v -args -seam.csv=$PWD/seam.csv
+//	go test ./kernelspace/detector -run TestSeam -v -args -seam.csv=$PWD/seam.csv
 
 import (
 	"cmp"
@@ -30,11 +28,8 @@ import (
 	"slices"
 	"strconv"
 	"testing"
-	"time"
 
-	"github.com/apultyn/eBPF-DDoS-Detection/userspace/capture"
-	"github.com/apultyn/eBPF-DDoS-Detection/userspace/flow"
-	"github.com/apultyn/eBPF-DDoS-Detection/userspace/window"
+	"github.com/apultyn/eBPF-DDoS-Detection/kernelspace/flow"
 )
 
 var seamCSV = flag.String("seam.csv", "", "write the seam experiment table to this CSV file")
@@ -64,12 +59,11 @@ type seamScenario struct {
 	TailWindows   int
 
 	// AttackPackets is the size of the burst, on top of the attacker's
-	// normal traffic. AttackSpan is how long it lasts.
+	// normal traffic.
 	AttackPackets int
-	AttackSpan    time.Duration
 }
 
-var sparseScenario = seamScenario{
+var seamScenario1 = seamScenario{
 	Name:          "sparse",
 	Seed:          1,
 	HeavyHosts:    8,
@@ -81,28 +75,15 @@ var sparseScenario = seamScenario{
 	NormalWindows: 40,
 	TailWindows:   4,
 	AttackPackets: 160,
-	AttackSpan:    length / 2,
 }
-
-// crowdedScenario adds 8000 light flows, eight per HeavyKeeper bucket row
-// and per Count-Min column.
-var crowdedScenario = func() seamScenario {
-	s := sparseScenario
-	s.Name = "crowded"
-	s.LightHosts = 8000
-	s.LightRate = 2
-	s.LightJitter = 1
-
-	return s
-}()
 
 type placement int
 
 const (
-	// inside places the whole burst in the middle of one window.
+	// inside places the whole burst in one window.
 	inside placement = iota
 
-	// straddling centres the burst on a boundary, half on each side.
+	// straddling splits the burst evenly across a boundary.
 	straddling
 )
 
@@ -116,32 +97,14 @@ func (p placement) String() string {
 
 var attacker = flow.MustParse("198.51.100.66")
 
-// seamTraffic generates the packets, in timestamp order, and returns the
-// first of the two windows the attack can touch and the attacker's true
-// packet count in every window.
-func seamTraffic(s seamScenario, place placement) ([]capture.Packet, int, map[int]uint64) {
+// seamTraffic generates each window's traffic and returns it together
+// with the first of the two windows the attack can touch and the
+// attacker's true packet count in every window.
+func seamTraffic(s seamScenario, place placement) ([]traffic, int, map[int]uint64) {
 	rng := rand.New(rand.NewPCG(s.Seed, 0))
 
-	var packets []capture.Packet
-	truth := map[int]uint64{}
-
-	emit := func(src flow.Key, ts time.Time) {
-		packets = append(packets, capture.Packet{Src: src, Timestamp: ts, Length: 100})
-
-		if src == attacker {
-			truth[int(ts.Sub(t0)/length)]++
-		}
-	}
-
-	spread := func(n, window int, src flow.Key) {
-		start := t0.Add(time.Duration(window) * length)
-		for i := 0; i < n; i++ {
-			emit(src, start.Add(time.Duration(rng.Int64N(int64(length)))))
-		}
-	}
-
-	jitter := func(rate, j int) int {
-		return rate - j + rng.IntN(2*j+1)
+	jitter := func(rate, j int) uint32 {
+		return uint32(rate - j + rng.IntN(2*j+1))
 	}
 
 	heavy := make([]flow.Key, s.HeavyHosts)
@@ -154,42 +117,39 @@ func seamTraffic(s seamScenario, place placement) ([]capture.Packet, int, map[in
 		light[i] = flow.FromIPv4([]byte{10, 1, byte(i >> 8), byte(i)})
 	}
 
-	total := s.NormalWindows + 2 + s.TailWindows
-	for w := 0; w < total; w++ {
+	trs := make([]traffic, s.NormalWindows+2+s.TailWindows)
+	for w := range trs {
+		tr := traffic{}
+
 		for _, h := range heavy {
-			spread(jitter(s.HeavyRate, s.HeavyJitter), w, h)
+			tr[h] = jitter(s.HeavyRate, s.HeavyJitter)
 		}
 
-		spread(jitter(s.HeavyRate, s.HeavyJitter), w, attacker)
+		tr[attacker] = jitter(s.HeavyRate, s.HeavyJitter)
 
 		for _, h := range light {
-			spread(jitter(s.LightRate, s.LightJitter), w, h)
+			tr[h] = jitter(s.LightRate, s.LightJitter)
 		}
+
+		trs[w] = tr
 	}
 
 	attackWindow := s.NormalWindows
+	burst := uint32(s.AttackPackets)
 
-	var centre time.Time
 	if place == inside {
-		centre = t0.Add(time.Duration(attackWindow)*length + length/2)
+		trs[attackWindow][attacker] += burst
 	} else {
-		centre = t0.Add(time.Duration(attackWindow+1) * length)
+		trs[attackWindow][attacker] += burst / 2
+		trs[attackWindow+1][attacker] += burst - burst/2
 	}
 
-	// Evenly spaced and symmetric around the centre, so a straddling
-	// burst is split exactly in half.
-	step := s.AttackSpan / time.Duration(s.AttackPackets)
-	first := centre.Add(-s.AttackSpan/2 + step/2)
-
-	for i := 0; i < s.AttackPackets; i++ {
-		emit(attacker, first.Add(time.Duration(i)*step))
+	truth := map[int]uint64{}
+	for w, tr := range trs {
+		truth[w] = uint64(tr[attacker])
 	}
 
-	slices.SortStableFunc(packets, func(a, b capture.Packet) int {
-		return a.Timestamp.Compare(b.Timestamp)
-	})
-
-	return packets, attackWindow, truth
+	return trs, attackWindow, truth
 }
 
 // seamRow is one line of the result table: the attacker in one of the two
@@ -198,7 +158,6 @@ type seamRow struct {
 	Scenario  string
 	Placement placement
 	Mode      Mode
-	Counts    window.CountSource
 
 	// Window is 0 for the first attack window and 1 for the next.
 	Window int
@@ -226,19 +185,15 @@ type seamRow struct {
 	OthersFlagged int
 }
 
-func runSeam(t *testing.T, s seamScenario, place placement, mode Mode, counts window.CountSource) []seamRow {
+func runSeam(t *testing.T, s seamScenario, place placement, mode Mode) []seamRow {
 	t.Helper()
 
-	packets, attackWindow, truth := seamTraffic(s, place)
-
-	wcfg := window.DefaultConfig()
-	wcfg.MaxEmpty = window.PcapMaxEmpty
-	wcfg.Counts = counts
+	trs, attackWindow, truth := seamTraffic(s, place)
 
 	dcfg := DefaultConfig()
 	dcfg.Mode = mode
 
-	results := run(t, wcfg, dcfg, packets)
+	results := newHarness(t, dcfg).windows(trs...)
 
 	var rows []seamRow
 
@@ -250,7 +205,6 @@ func runSeam(t *testing.T, s seamScenario, place placement, mode Mode, counts wi
 			Scenario:        s.Name,
 			Placement:       place,
 			Mode:            mode,
-			Counts:          counts,
 			Window:          offset,
 			TrueCurrent:     truth[n],
 			WindowEvaluated: r.EvaluatedPackets,
@@ -286,7 +240,7 @@ func runSeam(t *testing.T, s seamScenario, place placement, mode Mode, counts wi
 		}
 
 		if !found {
-			t.Fatalf("%s/%v/%v/%v: attacker is not a candidate in attack window %d", s.Name, place, mode, counts, offset)
+			t.Fatalf("%s/%v/%v: attacker is not a candidate in attack window %d", s.Name, place, mode, offset)
 		}
 
 		rows = append(rows, row)
@@ -309,8 +263,35 @@ func detected(rows []seamRow) bool {
 func TestSeam(t *testing.T) {
 	var all []seamRow
 
-	for _, s := range []seamScenario{sparseScenario, crowdedScenario} {
-		all = append(all, runSeamMatrix(t, s)...)
+	for _, place := range []placement{inside, straddling} {
+		for _, mode := range []Mode{ModeCurrentOnly, ModeCombined} {
+			rows := runSeam(t, seamScenario1, place, mode)
+			all = append(all, rows...)
+
+			name := place.String() + "/" + mode.String()
+
+			for _, r := range rows {
+				if r.IPWarmUp {
+					t.Errorf("%s: attacker still in warm-up; lengthen NormalWindows", name)
+				}
+				if r.OthersFlagged > 0 {
+					t.Errorf("%s window %d: %d normal hosts flagged", name, r.Window, r.OthersFlagged)
+				}
+				if r.Current != r.TrueCurrent || r.Previous != r.TruePrevious {
+					t.Errorf("%s window %d: counts %d + %d, want the exact %d + %d",
+						name, r.Window, r.Current, r.Previous, r.TrueCurrent, r.TruePrevious)
+				}
+			}
+
+			// The claim under test: a burst inside one window is caught
+			// either way, while a burst split by a boundary is only
+			// caught when windows are combined.
+			want := place == inside || mode == ModeCombined
+
+			if got := detected(rows); got != want {
+				t.Errorf("%s: detected = %v, want %v", name, got, want)
+			}
+		}
 	}
 
 	logSeamTable(t, all)
@@ -323,57 +304,17 @@ func TestSeam(t *testing.T) {
 	}
 }
 
-// runSeamMatrix runs every placement, mode and count source for one
-// scenario and checks the claim under test.
-func runSeamMatrix(t *testing.T, s seamScenario) []seamRow {
-	t.Helper()
-
-	var all []seamRow
-
-	for _, counts := range []window.CountSource{window.CountHeavyKeeper, window.CountCountMin} {
-		for _, place := range []placement{inside, straddling} {
-			for _, mode := range []Mode{ModeCurrentOnly, ModeCombined} {
-				rows := runSeam(t, s, place, mode, counts)
-				all = append(all, rows...)
-
-				name := s.Name + "/" + place.String() + "/" + mode.String() + "/" + counts.String()
-
-				for _, r := range rows {
-					if r.IPWarmUp {
-						t.Errorf("%s: attacker still in warm-up; lengthen NormalWindows", name)
-					}
-					if r.OthersFlagged > 0 {
-						t.Errorf("%s window %d: %d normal hosts flagged", name, r.Window, r.OthersFlagged)
-					}
-				}
-
-				// The claim under test: a burst inside one window is
-				// caught either way, while a burst split by a boundary
-				// is only caught when windows are combined.
-				want := place == inside || mode == ModeCombined
-
-				if got := detected(rows); got != want {
-					t.Errorf("%s: detected = %v, want %v", name, got, want)
-				}
-			}
-		}
-	}
-
-	return all
-}
-
 func logSeamTable(t *testing.T, rows []seamRow) {
-	for _, s := range []seamScenario{sparseScenario, crowdedScenario} {
-		t.Logf("%s: burst of %d packets over %v; %d heavy hosts at %d±%d and %d light hosts at %d±%d per window",
-			s.Name, s.AttackPackets, s.AttackSpan,
-			s.HeavyHosts+1, s.HeavyRate, s.HeavyJitter,
-			s.LightHosts, s.LightRate, s.LightJitter)
-	}
+	s := seamScenario1
+	t.Logf("%s: burst of %d packets; %d heavy hosts at %d±%d and %d light hosts at %d±%d per window",
+		s.Name, s.AttackPackets,
+		s.HeavyHosts+1, s.HeavyRate, s.HeavyJitter,
+		s.LightHosts, s.LightRate, s.LightJitter)
 
 	t.Logf("'term' is the side of max(Q3 + 1.5*IQR, BaseThreshold) the threshold was built from")
 
-	t.Logf("%-8s %-11s %-9s %-12s %3s | %9s %9s | %7s %7s %9s %9s %8s %5s %7s | %9s %9s %8s %5s %7s",
-		"scenario", "placement", "mode", "counts", "win",
+	t.Logf("%-8s %-11s %-9s %3s | %9s %9s | %7s %7s %9s %9s %8s %5s %7s | %9s %9s %8s %5s %7s",
+		"scenario", "placement", "mode", "win",
 		"true cur", "true prev",
 		"cur", "prev", "evaluated", "threshold", "Q3+1.5I", "term", "flagged",
 		"win total", "threshold", "Q3+1.5I", "term", "flagged")
@@ -382,15 +323,14 @@ func logSeamTable(t *testing.T, rows []seamRow) {
 	slices.SortStableFunc(sorted, func(a, b seamRow) int {
 		return cmp.Or(
 			cmp.Compare(a.Scenario, b.Scenario),
-			cmp.Compare(a.Counts, b.Counts),
 			cmp.Compare(a.Placement, b.Placement),
 			cmp.Compare(a.Mode, b.Mode),
 		)
 	})
 
 	for _, r := range sorted {
-		t.Logf("%-8s %-11v %-9v %-12v %3d | %9d %9d | %7d %7d %9d %9.1f %8.1f %5s %7v | %9d %9.1f %8.1f %5s %7v",
-			r.Scenario, r.Placement, r.Mode, r.Counts, r.Window,
+		t.Logf("%-8s %-11v %-9v %3d | %9d %9d | %7d %7d %9d %9.1f %8.1f %5s %7v | %9d %9.1f %8.1f %5s %7v",
+			r.Scenario, r.Placement, r.Mode, r.Window,
 			r.TrueCurrent, r.TruePrevious,
 			r.Current, r.Previous, r.Evaluated, r.IPThreshold, r.IPQuartile, term(r.IPFromFloor), r.IPFlagged,
 			r.WindowEvaluated, r.WindowThreshold, r.WindowQuartile, term(r.WindowFromFloor), r.WindowFlagged)
@@ -416,7 +356,7 @@ func writeSeamCSV(path string, rows []seamRow) error {
 	w := csv.NewWriter(f)
 
 	w.Write([]string{
-		"scenario", "placement", "mode", "counts", "window",
+		"scenario", "placement", "mode", "window",
 		"true_current", "true_previous",
 		"ip_current", "ip_previous", "ip_evaluated", "ip_threshold", "ip_quartile_bound", "ip_term", "ip_flagged",
 		"window_evaluated", "window_threshold", "window_quartile_bound", "window_term", "window_flagged",
@@ -428,7 +368,7 @@ func writeSeamCSV(path string, rows []seamRow) error {
 
 	for _, r := range rows {
 		w.Write([]string{
-			r.Scenario, r.Placement.String(), r.Mode.String(), r.Counts.String(), strconv.Itoa(r.Window),
+			r.Scenario, r.Placement.String(), r.Mode.String(), strconv.Itoa(r.Window),
 			u(r.TrueCurrent), u(r.TruePrevious),
 			u(r.Current), u(r.Previous), u(r.Evaluated),
 			f64(r.IPThreshold, 2), f64(r.IPQuartile, 2), term(r.IPFromFloor), strconv.FormatBool(r.IPFlagged),

@@ -1,3 +1,5 @@
+//go:build ignore
+
 // --------- Synopsis --------- //
 // This file constitute a preliminary implementation for HeavyKeeper in kernel space
 // ¤ Remember that this is a XDP hook on received packets

@@ -16,11 +16,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/apultyn/eBPF-DDoS-Detection/userspace/epoch"
-	"github.com/apultyn/eBPF-DDoS-Detection/userspace/flow"
-	"github.com/apultyn/eBPF-DDoS-Detection/userspace/iqr"
-	"github.com/apultyn/eBPF-DDoS-Detection/userspace/resource"
-	"github.com/apultyn/eBPF-DDoS-Detection/userspace/window"
+	"github.com/apultyn/eBPF-DDoS-Detection/kernelspace/epoch"
+	"github.com/apultyn/eBPF-DDoS-Detection/kernelspace/flow"
+	"github.com/apultyn/eBPF-DDoS-Detection/kernelspace/iqr"
+	"github.com/apultyn/eBPF-DDoS-Detection/kernelspace/resource"
+	"github.com/apultyn/eBPF-DDoS-Detection/kernelspace/window"
 )
 
 // Mode selects which counts are compared against the thresholds.
@@ -84,29 +84,26 @@ type WindowResult struct {
 	Start time.Time
 	End   time.Time
 
-	// SkippedBefore is non-zero for the first window after a jump over a
-	// long pause, and gives the number of epochs that produced no window.
+	// SkippedBefore is non-zero when windows right before this one were
+	// not evaluated because the detector fell behind the kernel, and gives
+	// how many.
 	SkippedBefore int64
 
-	// Packets and Bytes are the window's own exact totals.
+	// Packets and Bytes are the window's own exact totals, as counted by
+	// the kernel.
 	Packets uint64
 	Bytes   uint64
 
-	// Late is the number of out-of-order packets dropped while the window
-	// was open.
-	Late uint64
-
-	// KernelDrops is the number of packets the capture socket dropped,
-	// for lack of buffer space, between the previous window closing and
-	// this one. It is set by the caller for live capture, and is -1 when
-	// not measured, as for trace files.
+	// KernelDrops is the number of packets dropped before reaching the
+	// detector between the previous window closing and this one. It is
+	// set by the caller, and is -1 when not measured.
 	KernelDrops int64
 
 	// Evaluated is false when the window could not be judged: in
 	// ModeCombined, when there is no adjacent previous window to combine
-	// with (the first window, and the first after a jump). Nothing is
-	// then compared or added to any history, and the fields below are
-	// zero.
+	// with (the first window, and the first after skipped windows).
+	// Nothing is then compared or added to any history, and the fields
+	// below are zero.
 	Evaluated bool
 
 	// EvaluatedPackets is the window-level count compared against the
@@ -195,7 +192,11 @@ func (e *Evaluator) Detector() *iqr.Detector {
 
 // Evaluate judges a closed window. It must be called from the
 // aggregator's callback, while both windows in c are still valid.
-func (e *Evaluator) Evaluate(c window.Closed) WindowResult {
+//
+// The per-IP counts are read from the kernel. If a read fails, the error
+// is returned before anything is added to a history, so a failed window
+// leaves the thresholds as they were.
+func (e *Evaluator) Evaluate(c window.Closed) (WindowResult, error) {
 	w := c.Window
 
 	r := WindowResult{
@@ -205,7 +206,6 @@ func (e *Evaluator) Evaluate(c window.Closed) WindowResult {
 		SkippedBefore: w.SkippedBefore,
 		Packets:       w.Packets,
 		Bytes:         w.Bytes,
-		Late:          w.Late,
 		KernelDrops:   -1,
 		ClosedAt:      c.ClosedAt,
 		EvalStart:     e.now(),
@@ -218,13 +218,41 @@ func (e *Evaluator) Evaluate(c window.Closed) WindowResult {
 		// combined values, mixing two time scales. Skip it instead.
 		if c.Prev == nil {
 			r.EvalEnd = e.now()
-			return r
+			return r, nil
 		}
 
 		prev = c.Prev
 	}
 
+	// Every count is read before anything is judged: a judgement adds to
+	// a history, and a read that fails halfway must not leave the window
+	// learned from at one level but not the other.
+	candidates := w.Candidates()
+	ips := make([]IPResult, 0, len(candidates))
+	counts := make([]iqr.IPCount, 0, len(candidates))
+
+	for _, cand := range candidates {
+		ip := IPResult{IP: cand.Item}
+
+		var err error
+		if ip.Current, err = w.Count(cand.Item); err != nil {
+			return r, fmt.Errorf("detector: %w", err)
+		}
+
+		if prev != nil {
+			if ip.Previous, err = prev.Count(cand.Item); err != nil {
+				return r, fmt.Errorf("detector: %w", err)
+			}
+		}
+
+		ip.Evaluated = ip.Current + ip.Previous
+
+		ips = append(ips, ip)
+		counts = append(counts, iqr.IPCount{IP: ip.IP, Count: ip.Evaluated})
+	}
+
 	r.Evaluated = true
+	r.IPs = ips
 
 	r.EvaluatedPackets = w.Packets
 	if prev != nil {
@@ -238,26 +266,6 @@ func (e *Evaluator) Evaluate(c window.Closed) WindowResult {
 		TotalPackets: r.EvaluatedPackets,
 	})
 
-	candidates := w.Candidates()
-	r.IPs = make([]IPResult, 0, len(candidates))
-	counts := make([]iqr.IPCount, 0, len(candidates))
-
-	for _, cand := range candidates {
-		ip := IPResult{
-			IP:      cand.Item,
-			Current: w.Count(cand.Item),
-		}
-
-		if prev != nil {
-			ip.Previous = prev.Count(cand.Item)
-		}
-
-		ip.Evaluated = ip.Current + ip.Previous
-
-		r.IPs = append(r.IPs, ip)
-		counts = append(counts, iqr.IPCount{IP: ip.IP, Count: ip.Evaluated})
-	}
-
 	// All candidates are judged in one call, so that they are compared
 	// against the same shared history and the window is learned from
 	// only once every candidate has been judged.
@@ -267,5 +275,5 @@ func (e *Evaluator) Evaluate(c window.Closed) WindowResult {
 
 	r.EvalEnd = e.now()
 
-	return r
+	return r, nil
 }

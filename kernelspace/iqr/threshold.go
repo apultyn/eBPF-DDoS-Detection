@@ -36,7 +36,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/apultyn/eBPF-DDoS-Detection/userspace/flow"
+	"github.com/apultyn/eBPF-DDoS-Detection/kernelspace/flow"
 )
 
 // Config holds the tunable parameters of the IQR threshold model. All

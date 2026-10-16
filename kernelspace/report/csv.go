@@ -13,9 +13,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/apultyn/eBPF-DDoS-Detection/userspace/detector"
-	"github.com/apultyn/eBPF-DDoS-Detection/userspace/iqr"
-	"github.com/apultyn/eBPF-DDoS-Detection/userspace/resource"
+	"github.com/apultyn/eBPF-DDoS-Detection/kernelspace/detector"
+	"github.com/apultyn/eBPF-DDoS-Detection/kernelspace/iqr"
+	"github.com/apultyn/eBPF-DDoS-Detection/kernelspace/resource"
 )
 
 // Output file names inside the output directory.
@@ -35,7 +35,7 @@ type Sink interface {
 // nanoseconds since the Unix epoch.
 var windowColumns = []string{
 	"epoch", "start_ns", "end_ns",
-	"skipped_before", "packets", "bytes", "late", "kernel_drops",
+	"skipped_before", "packets", "bytes", "kernel_drops",
 	"evaluated", "evaluated_packets",
 	"warm_up", "threshold", "quartile_bound", "threshold_term", "malicious",
 	"flagged_ips",
@@ -122,7 +122,7 @@ func (s *CSVSink) Write(r *detector.WindowResult) error {
 	row := s.row[:0]
 	row = append(row,
 		epoch, ns(r.Start), ns(r.End),
-		strconv.FormatInt(r.SkippedBefore, 10), u(r.Packets), u(r.Bytes), u(r.Late),
+		strconv.FormatInt(r.SkippedBefore, 10), u(r.Packets), u(r.Bytes),
 		drops(r.KernelDrops),
 		strconv.FormatBool(r.Evaluated),
 	)

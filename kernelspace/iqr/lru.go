@@ -1,6 +1,6 @@
 package iqr
 
-import "github.com/apultyn/eBPF-DDoS-Detection/userspace/flow"
+import "github.com/apultyn/eBPF-DDoS-Detection/kernelspace/flow"
 
 // ipEntry is one tracked source address and its history, linked into the
 // recency list.

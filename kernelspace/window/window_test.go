@@ -1,462 +1,514 @@
 package window
 
 import (
+	"errors"
+	"slices"
 	"testing"
 	"time"
 
-	"github.com/apultyn/eBPF-DDoS-Detection/userspace/capture"
-	"github.com/apultyn/eBPF-DDoS-Detection/userspace/epoch"
-	"github.com/apultyn/eBPF-DDoS-Detection/userspace/flow"
+	"github.com/apultyn/eBPF-DDoS-Detection/kernelspace/epoch"
+	"github.com/apultyn/eBPF-DDoS-Detection/kernelspace/flow"
+	"github.com/apultyn/eBPF-DDoS-Detection/kernelspace/heavykeeper"
+	"github.com/apultyn/eBPF-DDoS-Detection/kernelspace/window/memsource"
+)
+
+var (
+	ipA = flow.MustParse("10.0.0.1")
+	ipB = flow.MustParse("10.0.0.2")
+	ipC = flow.MustParse("2001:db8::1")
 )
 
 const length = epoch.DefaultLength
 
-// t0 lies on a window boundary.
-var t0 = time.Unix(1_700_000_000, 0)
+// first is the epoch the tests start in. It is not a multiple of the slot
+// count, so a test that confused epochs with slots would fail.
+const first epoch.Epoch = 1_000_001
 
-var (
-	ipA = flow.MustParse("192.0.2.1")
-	ipB = flow.MustParse("2001:db8::b")
-)
+// at returns a time inside epoch e: offset into it, which must be less
+// than one window.
+func at(e epoch.Epoch, offset time.Duration) time.Time {
+	return e.Start(length).Add(offset)
+}
 
-// closedWindow is a copy of what the callback saw, taken before the
-// window is recycled.
+func slotOf(e epoch.Epoch) int {
+	return int(e) & (heavykeeper.Slots - 1)
+}
+
+// closedWindow is a copy of what the callback saw, since the windows
+// themselves are recycled.
 type closedWindow struct {
-	epoch         epoch.Epoch
-	start, end    time.Time
-	packets       uint64
-	skippedBefore int64
-
-	hasPrev     bool
-	prevEpoch   epoch.Epoch
-	prevPackets uint64
-
-	window, prev *Window
+	epoch      epoch.Epoch
+	slot       int
+	skipped    int64
+	packets    uint64
+	bytes      uint64
+	candidates []heavykeeper.TopKEntry
+	prev       epoch.Epoch // -1 when there was no Prev
+	countA     uint64
+	prevCountA uint64
 }
 
 type recorder struct {
 	closed []closedWindow
+	err    error
+
+	// during, if set, runs inside the callback, e.g. to make it slow.
+	during func()
 }
 
-func (r *recorder) onClose(c Closed) {
+func (r *recorder) onClose(c Closed) error {
+	w := c.Window
+
 	cw := closedWindow{
-		epoch:         c.Window.Epoch,
-		start:         c.Window.Start,
-		end:           c.Window.End,
-		packets:       c.Window.Packets,
-		skippedBefore: c.Window.SkippedBefore,
-		window:        c.Window,
-		prev:          c.Prev,
+		epoch:      w.Epoch,
+		slot:       w.Slot(),
+		skipped:    w.SkippedBefore,
+		packets:    w.Packets,
+		bytes:      w.Bytes,
+		candidates: w.Candidates(),
+		prev:       -1,
+	}
+
+	var err error
+	if cw.countA, err = w.Count(ipA); err != nil {
+		return err
 	}
 
 	if c.Prev != nil {
-		cw.hasPrev = true
-		cw.prevEpoch = c.Prev.Epoch
-		cw.prevPackets = c.Prev.Packets
+		cw.prev = c.Prev.Epoch
+		if cw.prevCountA, err = c.Prev.Count(ipA); err != nil {
+			return err
+		}
 	}
 
 	r.closed = append(r.closed, cw)
+
+	if r.during != nil {
+		r.during()
+	}
+
+	return r.err
 }
 
-// pcapConfig is the configuration used when replaying trace files, with
-// jumping over long pauses enabled.
-func pcapConfig() Config {
-	cfg := DefaultConfig()
-	cfg.MaxEmpty = PcapMaxEmpty
-
-	return cfg
+// fakeTAI is a simulated CLOCK_TAI that only moves when a test sets it.
+type fakeTAI struct {
+	now time.Time
 }
 
-func newTestAggregator(t *testing.T, cfg Config) (*Aggregator, *recorder) {
+func (c *fakeTAI) read() time.Time { return c.now }
+
+// tick moves the clock to now and ticks a, the way the live loop wakes up
+// at now.
+func (c *fakeTAI) tick(a *Aggregator, now time.Time) error {
+	c.now = now
+	return a.Tick()
+}
+
+func newTestAggregator(t *testing.T) (*Aggregator, *memsource.Source, *recorder, *fakeTAI) {
 	t.Helper()
 
+	src := memsource.New()
 	r := &recorder{}
+	clk := &fakeTAI{}
 
-	a, err := NewAggregator(cfg, r.onClose)
+	a, err := NewAggregator(DefaultConfig(), src, clk.read, r.onClose)
 	if err != nil {
-		t.Fatalf("NewAggregator: %v", err)
+		t.Fatal(err)
 	}
 
-	return a, r
+	return a, src, r, clk
 }
 
-// at returns a packet from src at the given offset from t0.
-func at(offset time.Duration, src flow.Key) capture.Packet {
-	return capture.Packet{Src: src, Timestamp: t0.Add(offset), Length: 100}
-}
+// run plays the kernel and the detector loop together: for each epoch it
+// adds that epoch's traffic to its slot, then ticks just past its end, the
+// way the live loop wakes up after each deadline.
+func run(t *testing.T, a *Aggregator, clk *fakeTAI, src *memsource.Source, from, to epoch.Epoch, traffic func(e epoch.Epoch, slot int)) {
+	t.Helper()
 
-// window returns the offset of the middle of the n:th window after t0.
-func window(n int) time.Duration {
-	return time.Duration(n)*length + length/2
-}
+	for e := from; e <= to; e++ {
+		traffic(e, slotOf(e))
 
-func TestAggregator_ClosesOnBoundaries(t *testing.T) {
-	a, r := newTestAggregator(t, DefaultConfig())
-
-	a.Observe(at(0, ipA))
-	a.Observe(at(length-time.Nanosecond, ipA)) // last instant of window 0
-	a.Observe(at(length, ipB))                 // first instant of window 1
-	a.Observe(at(window(2), ipA))
-
-	if len(r.closed) != 2 {
-		t.Fatalf("closed %d windows, want 2", len(r.closed))
-	}
-
-	first, second := r.closed[0], r.closed[1]
-
-	if first.packets != 2 || second.packets != 1 {
-		t.Errorf("packets = %d, %d, want 2, 1", first.packets, second.packets)
-	}
-
-	if !first.start.Equal(t0) || !first.end.Equal(t0.Add(length)) {
-		t.Errorf("first window = [%v, %v), want [%v, %v)", first.start, first.end, t0, t0.Add(length))
-	}
-
-	if second.epoch != first.epoch+1 {
-		t.Errorf("epochs %d, %d are not consecutive", first.epoch, second.epoch)
-	}
-
-	// The first window has no predecessor, so no combined count may be
-	// formed for it; the second is paired with the first.
-	if first.hasPrev {
-		t.Error("first window was handed a previous window")
-	}
-
-	if !second.hasPrev || second.prevEpoch != first.epoch || second.prevPackets != 2 {
-		t.Errorf("second window's prev = (%v, epoch %d, %d packets), want the first window",
-			second.hasPrev, second.prevEpoch, second.prevPackets)
-	}
-}
-
-func TestAggregator_ShortPauseProducesEmptyWindows(t *testing.T) {
-	cfg := pcapConfig()
-	a, r := newTestAggregator(t, cfg)
-
-	a.Observe(at(window(0), ipA))
-	a.Observe(at(window(cfg.MaxEmpty+1), ipA)) // exactly MaxEmpty empty windows between
-
-	if want := cfg.MaxEmpty + 1; len(r.closed) != want {
-		t.Fatalf("closed %d windows, want %d", len(r.closed), want)
-	}
-
-	for i, w := range r.closed[1:] {
-		if w.packets != 0 {
-			t.Errorf("window %d has %d packets, want 0", i+1, w.packets)
-		}
-		if !w.hasPrev || w.prevEpoch != w.epoch-1 {
-			t.Errorf("window %d is not paired with its predecessor", i+1)
+		if err := clk.tick(a, at(e+1, time.Millisecond)); err != nil {
+			t.Fatalf("Tick after epoch %d: %v", e, err)
 		}
 	}
+}
 
-	if st := a.Stats(); st.Jumps != 0 || st.Empty != uint64(cfg.MaxEmpty) {
-		t.Errorf("Stats = %+v, want %d empty windows and no jump", st, cfg.MaxEmpty)
+func TestTick_FirstWindowIsDiscarded(t *testing.T) {
+	a, src, r, clk := newTestAggregator(t)
+
+	if err := clk.tick(a, at(first, length/2)); err != nil {
+		t.Fatal(err)
+	}
+
+	// Starting clears every slot.
+	if want := []int{0, 1, 2, 3}; !slices.Equal(src.Resets, want) {
+		t.Errorf("Resets after start = %v, want %v", src.Resets, want)
+	}
+
+	// The kernel was already counting the first window before the
+	// aggregator started, so its slot does not hold all of it.
+	src.Add(slotOf(first), ipA, 7, 700)
+
+	if err := clk.tick(a, at(first+1, time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(r.closed) != 0 {
+		t.Fatalf("first window was evaluated: %+v", r.closed)
+	}
+	if st := a.Stats(); st.Discarded != 1 || st.Closed != 0 {
+		t.Errorf("Stats = %+v, want 1 discarded and none closed", st)
 	}
 }
 
-func TestAggregator_LongPauseJumps(t *testing.T) {
-	cfg := pcapConfig()
-	a, r := newTestAggregator(t, cfg)
+func TestTick_ReadsEachWindowFromItsSlot(t *testing.T) {
+	a, src, r, clk := newTestAggregator(t)
 
-	const resume = 1000
-
-	a.Observe(at(window(0), ipA))
-	a.Observe(at(window(resume), ipB))
-	a.Observe(at(window(resume+1), ipA))
-
-	// Window 0, then MaxEmpty empty windows, then the window the traffic
-	// resumed in.
-	if want := 1 + cfg.MaxEmpty + 1; len(r.closed) != want {
-		t.Fatalf("closed %d windows, want %d", len(r.closed), want)
+	if err := clk.tick(a, at(first, 0)); err != nil {
+		t.Fatal(err)
 	}
 
-	resumed := r.closed[len(r.closed)-1]
-
-	if want := r.closed[0].epoch + resume; resumed.epoch != want {
-		t.Errorf("resumed in epoch %d, want %d", resumed.epoch, want)
-	}
-
-	// Windows 1..MaxEmpty were produced; MaxEmpty+1..resume-1 were not.
-	if want := int64(resume - cfg.MaxEmpty - 1); resumed.skippedBefore != want {
-		t.Errorf("SkippedBefore = %d, want %d", resumed.skippedBefore, want)
-	}
-
-	// The window before the pause is not adjacent, so it must not be
-	// combined with the first window after it.
-	if resumed.hasPrev {
-		t.Error("window after a jump was paired with a window from before the pause")
-	}
-
-	if st := a.Stats(); st.Jumps != 1 || st.SkippedEpochs != uint64(resumed.skippedBefore) {
-		t.Errorf("Stats = %+v, want one jump over %d epochs", st, resumed.skippedBefore)
-	}
-}
-
-func TestAggregator_ZeroMaxEmptyNeverJumps(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.MaxEmpty = LiveMaxEmpty
-
-	a, r := newTestAggregator(t, cfg)
-
-	const resume = 500
-
-	a.Observe(at(window(0), ipA))
-
-	// A live capture idling for a long time keeps closing windows.
-	a.Advance(t0.Add(window(resume - 1)))
-
-	if _, ok := a.Deadline(); !ok {
-		t.Error("no deadline while idling with jumping disabled")
-	}
-
-	a.Observe(at(window(resume), ipA))
-	a.Observe(at(window(resume+1), ipA))
-
-	if len(r.closed) != resume+1 {
-		t.Fatalf("closed %d windows, want %d", len(r.closed), resume+1)
-	}
-
-	for i, w := range r.closed {
-		if w.epoch != r.closed[0].epoch+epoch.Epoch(i) || w.skippedBefore != 0 {
-			t.Fatalf("window %d: epoch %d, skipped %d; want continuous numbering", i, w.epoch, w.skippedBefore)
+	// Each epoch e gets 10*(e-first) packets from ipA, so every window
+	// has a distinct count that can only come from its own slot.
+	run(t, a, clk, src, first, first+6, func(e epoch.Epoch, slot int) {
+		n := uint32(10 * (e - first))
+		if n > 0 {
+			src.Add(slot, ipA, n, uint64(n)*100)
 		}
-		if i > 0 && !w.hasPrev {
-			t.Fatalf("window %d is not paired with its predecessor", i)
+		src.Add(slot, ipB, 1, 60)
+	})
+
+	if len(r.closed) != 6 {
+		t.Fatalf("%d windows closed, want 6 (all but the first)", len(r.closed))
+	}
+
+	for i, c := range r.closed {
+		e := first + 1 + epoch.Epoch(i)
+		wantA := uint64(10 * (e - first))
+
+		if c.epoch != e || c.slot != slotOf(e) {
+			t.Errorf("window %d: epoch %d slot %d, want epoch %d slot %d", i, c.epoch, c.slot, e, slotOf(e))
+		}
+		if c.packets != wantA+1 || c.bytes != wantA*100+60 {
+			t.Errorf("epoch %d: totals %d packets %d bytes, want %d, %d", e, c.packets, c.bytes, wantA+1, wantA*100+60)
+		}
+		if c.countA != wantA {
+			t.Errorf("epoch %d: Count(ipA) = %d, want %d", e, c.countA, wantA)
+		}
+		if len(c.candidates) == 0 || c.candidates[0].Item != ipA {
+			t.Errorf("epoch %d: candidates %v, want ipA first", e, c.candidates)
 		}
 	}
+}
 
-	if st := a.Stats(); st.Jumps != 0 || st.Empty != resume-1 {
-		t.Errorf("Stats = %+v, want %d empty windows and no jump", st, resume-1)
+func TestTick_PrevOnlyForAdjacentCleanWindows(t *testing.T) {
+	a, src, r, clk := newTestAggregator(t)
+
+	if err := clk.tick(a, at(first, 0)); err != nil {
+		t.Fatal(err)
+	}
+
+	run(t, a, clk, src, first, first+3, func(e epoch.Epoch, slot int) {
+		src.Add(slot, ipA, uint32(e-first+1), 0)
+	})
+
+	// The first evaluated window's predecessor is the discarded start
+	// window, so it has no Prev; every later one is combined with the
+	// window before it, read from that window's own slot.
+	if r.closed[0].prev != -1 {
+		t.Errorf("epoch %d combined with the discarded start window", r.closed[0].epoch)
+	}
+
+	for _, c := range r.closed[1:] {
+		if c.prev != c.epoch-1 {
+			t.Errorf("epoch %d: Prev = %d, want %d", c.epoch, c.prev, c.epoch-1)
+		}
+		if want := uint64(c.epoch - 1 - first + 1); c.prevCountA != want {
+			t.Errorf("epoch %d: Prev.Count(ipA) = %d, want %d", c.epoch, c.prevCountA, want)
+		}
 	}
 }
 
-func TestAggregator_AdvanceClosesIdleWindows(t *testing.T) {
-	cfg := pcapConfig()
-	a, r := newTestAggregator(t, cfg)
+// The core safety property: closing window e clears slot e+2 and never a
+// slot that is still being read (e, e-1) or written by the kernel (e+1).
+func TestTick_ClearsTheSlotTwoAhead(t *testing.T) {
+	a, src, _, clk := newTestAggregator(t)
+
+	if err := clk.tick(a, at(first, 0)); err != nil {
+		t.Fatal(err)
+	}
+
+	for e := first; e < first+8; e++ {
+		before := len(src.Resets)
+
+		if err := clk.tick(a, at(e+1, time.Millisecond)); err != nil {
+			t.Fatal(err)
+		}
+
+		got := src.Resets[before:]
+		if want := []int{slotOf(e + 2)}; !slices.Equal(got, want) {
+			t.Fatalf("closing epoch %d reset slots %v, want %v", e, got, want)
+		}
+	}
+}
+
+func TestTick_CandidatesCappedAtK(t *testing.T) {
+	a, src, r, clk := newTestAggregator(t)
+
+	if err := clk.tick(a, at(first, 0)); err != nil {
+		t.Fatal(err)
+	}
+
+	run(t, a, clk, src, first, first+1, func(e epoch.Epoch, slot int) {
+		for i := 0; i < heavykeeper.K; i++ {
+			src.Add(slot, flow.FromIPv4([]byte{10, 2, 0, byte(i)}), uint32(i+1), 0)
+		}
+	})
+
+	if got, want := len(r.closed[0].candidates), DefaultConfig().K; got != want {
+		t.Errorf("%d candidates, want %d", got, want)
+	}
+}
+
+// Falling one window behind: the kernel is already in e+2 when e closes,
+// so e+2's slot is cleared too late and e+2 must be discarded, and e+3
+// may not be combined with it.
+func TestTick_SlightlyBehindDiscardsTheUnclearedWindow(t *testing.T) {
+	a, src, r, clk := newTestAggregator(t)
+
+	if err := clk.tick(a, at(first, 0)); err != nil {
+		t.Fatal(err)
+	}
+
+	// Close the start window on time, so the aggregator is current up to
+	// e, then miss e's deadline.
+	e := first + 1
+	run(t, a, clk, src, first, e-1, func(epoch.Epoch, int) {})
+
+	src.Add(slotOf(e), ipA, 5, 0)
+	src.Add(slotOf(e+1), ipA, 6, 0)
+
+	// Wake up late, already inside e+2.
+	if err := clk.tick(a, at(e+2, time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+
+	src.Add(slotOf(e+2), ipA, 7, 0)
+	if err := clk.tick(a, at(e+3, time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+
+	src.Add(slotOf(e+3), ipA, 8, 0)
+	if err := clk.tick(a, at(e+4, time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+
+	var epochs []epoch.Epoch
+	for _, c := range r.closed {
+		epochs = append(epochs, c.epoch)
+	}
+
+	// e and e+1 are intact; e+2 is not.
+	if slices.Contains(epochs, e+2) {
+		t.Errorf("epoch %d was evaluated although its slot was cleared too late; closed %v", e+2, epochs)
+	}
+	for _, want := range []epoch.Epoch{e, e + 1, e + 3} {
+		if !slices.Contains(epochs, want) {
+			t.Errorf("epoch %d not evaluated; closed %v", want, epochs)
+		}
+	}
+
+	last := r.closed[len(r.closed)-1]
+	if last.epoch != e+3 || last.prev != -1 {
+		t.Errorf("epoch %d: Prev = %d, want none since %d was discarded", last.epoch, last.prev, e+2)
+	}
+	if last.skipped != 1 {
+		t.Errorf("epoch %d: SkippedBefore = %d, want 1 for the discarded %d", last.epoch, last.skipped, e+2)
+	}
+	if r.closed[0].skipped != 0 {
+		t.Errorf("first evaluated window reports %d skipped; the start window is not a gap", r.closed[0].skipped)
+	}
+	if st := a.Stats(); st.Jumps != 0 {
+		t.Errorf("Stats = %+v, want no jump for a one-window delay", st)
+	}
+}
+
+// Waking up on time but evaluating slowly is the same hazard as waking
+// up late: if the callback for e runs into e+2, slot e+2 is cleared after
+// the kernel began writing it, and e+2 must be discarded.
+func TestTick_SlowCallbackDiscardsTheUnclearedWindow(t *testing.T) {
+	a, src, r, clk := newTestAggregator(t)
+
+	if err := clk.tick(a, at(first, 0)); err != nil {
+		t.Fatal(err)
+	}
+
+	e := first + 1
+	run(t, a, clk, src, first, first, func(epoch.Epoch, int) {})
+
+	// The callback for e takes a window and a half.
+	r.during = func() {
+		if r.closed[len(r.closed)-1].epoch == e {
+			clk.now = clk.now.Add(length + length/2)
+		}
+	}
+
+	src.Add(slotOf(e), ipA, 1, 0)
+	if err := clk.tick(a, at(e+1, time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+
+	// The same Tick noticed that e+1 had ended meanwhile and closed it.
+	r.during = nil
+	run(t, a, clk, src, e+2, e+4, func(ep epoch.Epoch, slot int) {
+		src.Add(slot, ipA, 1, 0)
+	})
+
+	var epochs []epoch.Epoch
+	for _, c := range r.closed {
+		epochs = append(epochs, c.epoch)
+	}
+
+	if slices.Contains(epochs, e+2) {
+		t.Errorf("epoch %d was evaluated although its slot was cleared after the kernel reached it; closed %v", e+2, epochs)
+	}
+	for _, want := range []epoch.Epoch{e, e + 1, e + 3, e + 4} {
+		if !slices.Contains(epochs, want) {
+			t.Errorf("epoch %d not evaluated; closed %v", want, epochs)
+		}
+	}
+}
+
+func TestTick_FarBehindJumps(t *testing.T) {
+	a, src, r, clk := newTestAggregator(t)
+
+	if err := clk.tick(a, at(first, 0)); err != nil {
+		t.Fatal(err)
+	}
+
+	run(t, a, clk, src, first, first+2, func(e epoch.Epoch, slot int) {
+		src.Add(slot, ipA, 1, 0)
+	})
+	before := len(r.closed)
+
+	// A stall: the next wake-up is well past every slot's reuse.
+	resume := first + 3 + 10
+	if err := clk.tick(a, at(resume, time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(r.closed) != before {
+		t.Errorf("windows evaluated across the stall: %+v", r.closed[before:])
+	}
+
+	st := a.Stats()
+	if st.Jumps != 1 || st.SkippedEpochs != 10 {
+		t.Errorf("Stats = %+v, want 1 jump over 10 epochs", st)
+	}
+
+	// The window open at the resume is discarded like the start window.
+	// The first window evaluated after it reports the whole gap: the 10
+	// lost epochs plus the discarded resume window.
+	run(t, a, clk, src, resume, resume+2, func(e epoch.Epoch, slot int) {
+		src.Add(slot, ipA, 2, 0)
+	})
+
+	after := r.closed[before:]
+	if len(after) != 2 || after[0].epoch != resume+1 {
+		t.Fatalf("after the jump closed %+v, want epochs %d and %d", after, resume+1, resume+2)
+	}
+	if after[0].prev != -1 {
+		t.Errorf("first window after the jump was combined with %d", after[0].prev)
+	}
+	if after[0].skipped != 11 {
+		t.Errorf("first window after the jump: SkippedBefore = %d, want 11", after[0].skipped)
+	}
+	if after[1].skipped != 0 || after[1].prev != resume+1 {
+		t.Errorf("second window after the jump: %+v, want no gap and Prev %d", after[1], resume+1)
+	}
+}
+
+func TestTick_ErrorsArePropagated(t *testing.T) {
+	t.Run("map read", func(t *testing.T) {
+		a, src, _, clk := newTestAggregator(t)
+
+		if err := clk.tick(a, at(first, 0)); err != nil {
+			t.Fatal(err)
+		}
+		run(t, a, clk, src, first, first, func(epoch.Epoch, int) {})
+
+		boom := errors.New("map read failed")
+		src.Err = boom
+
+		if err := clk.tick(a, at(first+2, time.Millisecond)); !errors.Is(err, boom) {
+			t.Errorf("Tick error = %v, want %v", err, boom)
+		}
+	})
+
+	t.Run("callback", func(t *testing.T) {
+		a, src, r, clk := newTestAggregator(t)
+
+		boom := errors.New("write failed")
+		r.err = boom
+
+		if err := clk.tick(a, at(first, 0)); err != nil {
+			t.Fatal(err)
+		}
+		run(t, a, clk, src, first, first, func(epoch.Epoch, int) {})
+
+		if err := clk.tick(a, at(first+2, time.Millisecond)); !errors.Is(err, boom) {
+			t.Errorf("Tick error = %v, want %v", err, boom)
+		}
+	})
+}
+
+func TestDeadlineAndFinish(t *testing.T) {
+	a, src, _, clk := newTestAggregator(t)
 
 	if _, ok := a.Deadline(); ok {
-		t.Error("deadline set before the first packet")
+		t.Error("Deadline before the first Tick")
 	}
-
-	a.Observe(at(window(0), ipA))
-
-	if d, ok := a.Deadline(); !ok || !d.Equal(t0.Add(length)) {
-		t.Errorf("Deadline = %v, %v; want end of window 0", d, ok)
-	}
-
-	// Traffic stops; the reads time out at each deadline.
-	a.Advance(t0.Add(length))
-	a.Advance(t0.Add(3 * length))
-
-	if len(r.closed) != 3 {
-		t.Fatalf("closed %d windows after idling to window 3, want 3", len(r.closed))
-	}
-
-	// Idle far past the limit: only MaxEmpty empty windows are closed,
-	// and after that there is nothing to wait for.
-	a.Advance(t0.Add(1000 * length))
-
-	if want := 1 + cfg.MaxEmpty; len(r.closed) != want {
-		t.Fatalf("closed %d windows after a long idle period, want %d", len(r.closed), want)
-	}
-
-	if _, ok := a.Deadline(); ok {
-		t.Error("deadline set while waiting out a long pause")
-	}
-
-	// Traffic returns and the aggregator jumps.
-	a.Observe(at(window(2000), ipB))
-	a.Observe(at(window(2001), ipB))
-
-	resumed := r.closed[len(r.closed)-1]
-
-	if resumed.epoch != r.closed[0].epoch+2000 || resumed.hasPrev || resumed.skippedBefore == 0 {
-		t.Errorf("resumed window = %+v, want epoch +2000 with a jump and no prev", resumed)
-	}
-}
-
-func TestAggregator_LatePacketsAreDroppedAndCounted(t *testing.T) {
-	a, r := newTestAggregator(t, DefaultConfig())
-
-	a.Observe(at(window(0), ipA))
-	a.Observe(at(window(1), ipA))
-	a.Observe(at(window(0), ipB)) // reordered: its window has closed
-	a.Observe(at(window(0), ipB))
-	a.Observe(at(window(2), ipA))
-
-	w := r.closed[1]
-
-	if w.packets != 1 {
-		t.Errorf("window 1 has %d packets, want 1: late packets must not be counted in it", w.packets)
-	}
-	if w.window.Count(ipB) != 0 {
-		t.Error("late packet reached the window's sketch")
-	}
-	if w.window.Late != 2 {
-		t.Errorf("window 1 reports %d late packets, want 2", w.window.Late)
-	}
-	if a.Stats().Late != 2 {
-		t.Errorf("Stats().Late = %d, want 2", a.Stats().Late)
-	}
-}
-
-func TestAggregator_Finish(t *testing.T) {
-	a, r := newTestAggregator(t, DefaultConfig())
-
 	if _, ok := a.Finish(); ok {
-		t.Error("Finish reported a window before any packet")
+		t.Error("Finish before the first Tick")
 	}
 
-	a.Observe(at(window(0), ipA))
-	a.Observe(at(window(1), ipA))
-	a.Observe(at(window(1), ipB))
+	if err := clk.tick(a, at(first, length/2)); err != nil {
+		t.Fatal(err)
+	}
+
+	if d, ok := a.Deadline(); !ok || !d.Equal(first.End(length)) {
+		t.Errorf("Deadline = %v, %v; want end of epoch %d", d, ok, first)
+	}
+
+	src.Add(slotOf(first), ipC, 3, 300)
 
 	d, ok := a.Finish()
-	if !ok || d.Packets != 2 || d.Epoch != r.closed[0].epoch+1 {
-		t.Errorf("Finish = %+v, %v; want window 1 with 2 packets", d, ok)
-	}
-
-	// The incomplete window is dropped, not handed to the callback.
-	if len(r.closed) != 1 {
-		t.Errorf("closed %d windows, want 1", len(r.closed))
+	if !ok || d.Epoch != first || d.Packets != 3 || d.Bytes != 300 {
+		t.Errorf("Finish = %+v, %v; want epoch %d with 3 packets, 300 bytes", d, ok, first)
 	}
 }
 
-func TestAggregator_RecyclesTwoWindows(t *testing.T) {
-	a, r := newTestAggregator(t, DefaultConfig())
+func TestConfigValidation(t *testing.T) {
+	src := memsource.New()
+	noop := func(Closed) error { return nil }
 
-	for i := 0; i < 50; i++ {
-		a.Observe(at(window(i), ipA))
+	if _, err := NewAggregator(DefaultConfig(), src, time.Now, noop); err != nil {
+		t.Fatalf("default config rejected: %v", err)
 	}
 
-	seen := map[*Window]bool{}
-	for _, w := range r.closed {
-		seen[w.window] = true
-	}
-
-	if len(seen) != 2 {
-		t.Errorf("used %d distinct windows, want 2", len(seen))
-	}
-
-	// The previous window handed over must be the one closed just
-	// before, not a copy.
-	for i := 1; i < len(r.closed); i++ {
-		if r.closed[i].prev != r.closed[i-1].window {
-			t.Fatalf("window %d was paired with the wrong previous window", i)
-		}
-	}
-}
-
-func TestWindow_CountSources(t *testing.T) {
-	for _, src := range []CountSource{CountHeavyKeeper, CountCountMin} {
-		t.Run(src.String(), func(t *testing.T) {
-			cfg := DefaultConfig()
-			cfg.Counts = src
-
-			var (
-				counts []uint64
-				tops   []flow.Key
-			)
-
-			a, err := NewAggregator(cfg, func(c Closed) {
-				counts = append(counts, c.Window.Count(ipA))
-
-				if cand := c.Window.Candidates(); len(cand) > 0 {
-					tops = append(tops, cand[0].Item)
-				}
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			for i := 0; i < 300; i++ {
-				a.Observe(at(time.Duration(i)*time.Millisecond, ipA))
-			}
-			for i := 0; i < 10; i++ {
-				a.Observe(at(window(1), ipB))
-			}
-			a.Observe(at(window(2), ipB))
-
-			// A single flow is counted exactly by both structures, and a
-			// recycled window must start again from zero.
-			if len(counts) != 2 || counts[0] != 300 || counts[1] != 0 {
-				t.Errorf("counts for %v = %v, want [300 0]", ipA, counts)
-			}
-
-			if len(tops) != 2 || tops[0] != ipA || tops[1] != ipB {
-				t.Errorf("top candidates = %v, want [%v %v]", tops, ipA, ipB)
-			}
-		})
-	}
-}
-
-func TestParseCountSource(t *testing.T) {
-	for in, want := range map[string]CountSource{
-		"heavykeeper": CountHeavyKeeper,
-		"hk":          CountHeavyKeeper,
-		"countmin":    CountCountMin,
-		"cms":         CountCountMin,
+	for name, mutate := range map[string]func(*Config){
+		"length differs from the kernel's": func(c *Config) { c.Length = 500 * time.Millisecond },
+		"k zero":                           func(c *Config) { c.K = 0 },
+		"k above the Top-K table":          func(c *Config) { c.K = heavykeeper.K + 1 },
 	} {
-		if got, err := ParseCountSource(in); err != nil || got != want {
-			t.Errorf("ParseCountSource(%q) = %v, %v; want %v", in, got, err, want)
-		}
-	}
-
-	if _, err := ParseCountSource("exact"); err == nil {
-		t.Error("ParseCountSource accepted an unknown source")
-	}
-}
-
-func TestNewAggregator_ValidatesConfig(t *testing.T) {
-	broken := []func(*Config){
-		func(c *Config) { c.Length = 0 },
-		func(c *Config) { c.MaxEmpty = -1 },
-		func(c *Config) { c.Width = 1000 },
-		func(c *Config) { c.DecayBase = 1 },
-		func(c *Config) { c.K = 0 },
-		func(c *Config) { c.Counts = CountCountMin; c.CMSWidth = 0 },
-		func(c *Config) { c.Counts = 7 },
-	}
-
-	for i, mutate := range broken {
 		cfg := DefaultConfig()
 		mutate(&cfg)
 
-		if _, err := NewAggregator(cfg, func(Closed) {}); err == nil {
-			t.Errorf("config %d was accepted", i)
+		if _, err := NewAggregator(cfg, src, time.Now, noop); err == nil {
+			t.Errorf("%s: accepted", name)
 		}
 	}
 }
 
-func BenchmarkObserve(b *testing.B) {
-	for _, src := range []CountSource{CountHeavyKeeper, CountCountMin} {
-		b.Run(src.String(), func(b *testing.B) {
-			cfg := DefaultConfig()
-			cfg.Counts = src
-
-			a, err := NewAggregator(cfg, func(Closed) {})
-			if err != nil {
-				b.Fatal(err)
-			}
-
-			keys := make([]flow.Key, 4096)
-			for i := range keys {
-				keys[i] = flow.FromIPv4([]byte{10, 0, byte(i >> 8), byte(i)})
-			}
-
-			// Spread the packets over many windows so closing and
-			// recycling are part of the measurement.
-			step := length / 10_000
-
-			b.ReportAllocs()
-			b.ResetTimer()
-
-			for i := 0; i < b.N; i++ {
-				a.Observe(capture.Packet{
-					Src:       keys[i%len(keys)],
-					Timestamp: t0.Add(time.Duration(i) * step),
-					Length:    100,
-				})
-			}
-		})
-	}
-}
+var _ Source = (*memsource.Source)(nil)

@@ -10,52 +10,42 @@ import (
 	"strings"
 	"time"
 
-	"github.com/apultyn/eBPF-DDoS-Detection/userspace/capture"
-	"github.com/apultyn/eBPF-DDoS-Detection/userspace/window"
+	"github.com/apultyn/eBPF-DDoS-Detection/kernelspace/capture"
+	"github.com/apultyn/eBPF-DDoS-Detection/kernelspace/window"
 )
 
-// TraceTimingNote explains the wall-clock columns of a trace replay, and
-// is written into its run.json so the two latency measures are not
-// confused.
-const TraceTimingNote = "closed_at_ns, eval_start_ns and eval_end_ns are wall-clock " +
-	"times on the machine running the detector. eval_end_ns - eval_start_ns " +
-	"is the processing time per window. When replaying a trace, the trace is " +
-	"read faster than real time, so eval_end_ns - closed_at_ns is NOT the " +
-	"detection latency. Detection latency is measured in trace time: from the " +
-	"attack start in the dataset labels to end_ns of the first flagged window, " +
-	"and is computed in the analysis."
-
-// LiveTimingNote explains the timing columns of a live capture.
-const LiveTimingNote = "Packet timestamps are the kernel's receive times, and " +
+// TimingNote explains the timing columns.
+const TimingNote = "XDP assigns each packet to a window by the kernel's CLOCK_TAI. " +
+	"start_ns and end_ns are converted to the wall clock (CLOCK_REALTIME) by " +
+	"subtracting the TAI offset measured at start (tai_offset_seconds), so " +
 	"start_ns/end_ns, closed_at_ns, eval_start_ns and eval_end_ns are all on the " +
 	"same wall clock. eval_end_ns - end_ns is the detection delay after the window " +
-	"ended; it includes the grace period the detector waits for late packets " +
-	"before closing a quiet window. eval_end_ns - eval_start_ns is the processing " +
-	"time per window. Detection latency from attack start is eval_end_ns of the " +
-	"first flagged window minus the attack start."
+	"ended; it includes the grace period the detector waits after each boundary " +
+	"for packets still in XDP on other CPUs. eval_end_ns - eval_start_ns is the " +
+	"processing time per window, including the map reads for the per-IP counts. " +
+	"Detection latency from attack start is eval_end_ns of the first flagged " +
+	"window minus the attack start."
 
 // ResourceNote explains the resource columns of windows.csv.
 const ResourceNote = "heap_alloc_bytes, user_cpu_ns, sys_cpu_ns, cpu_interval_ns and " +
-	"cpu_share describe the detector process itself, sampled once per window " +
-	"right after the window is evaluated. The CPU columns cover the wall-clock " +
-	"interval since the previous sample (cpu_interval_ns) and are summed over " +
-	"all threads; cpu_share is (user + sys) / interval, where 1.0 is one core " +
-	"fully busy. In a live capture the interval is about one window length. In " +
-	"a trace replay the input is read as fast as possible, so cpu_share is " +
-	"close to 1 by construction; use (user_cpu_ns + sys_cpu_ns) / packets as " +
-	"the cost per packet instead. sys_cpu_ns is mostly the capture's system " +
-	"calls. On Linux the user/sys split has a resolution of one scheduler tick."
+	"cpu_share describe the user-space detector process only, sampled once per " +
+	"window right after the window is evaluated. The per-packet work done by XDP " +
+	"runs in the kernel and is not included. The CPU columns cover the wall-clock " +
+	"interval since the previous sample (cpu_interval_ns), about one window " +
+	"length, and are summed over all threads; cpu_share is (user + sys) / " +
+	"interval, where 1.0 is one core fully busy. sys_cpu_ns is mostly the BPF " +
+	"map reads and clears. On Linux the user/sys split has a resolution of one " +
+	"scheduler tick."
 
 // SentPacketsNote reminds that the number of packets sent is not recorded
 // by the detector.
 const SentPacketsNote = "The number of packets sent is not recorded here: the " +
-	"detector only sees what arrives. Save the tcpreplay output from the sender " +
-	"next to this run.json; together with live.socket and live.nic_delta it " +
-	"shows how many packets were lost before the detector and at which layer."
+	"detector only sees what XDP counted. Save the tcpreplay output from the " +
+	"sender next to this run.json; together with live.nic_delta it shows how " +
+	"many packets were lost before XDP."
 
 // How a run ended.
 const (
-	EndSourceEnded     = "source_ended"
 	EndInterrupted     = "interrupted"
 	EndDurationReached = "duration_reached"
 	EndError           = "error"
@@ -70,21 +60,16 @@ type Run struct {
 	StartedAt  time.Time `json:"started_at"`
 	FinishedAt time.Time `json:"finished_at"`
 
-	// EndReason is how the run ended: EndSourceEnded when the trace
-	// files ran out, EndInterrupted on Ctrl-C, EndDurationReached when a
-	// live capture reached its -duration, or EndError.
+	// EndReason is how the run ended: EndInterrupted on Ctrl-C,
+	// EndDurationReached when the run reached its -duration, or EndError.
 	EndReason string `json:"end_reason"`
 
-	// Source is "pcap" or "live".
+	// Source is "xdp".
 	Source string `json:"source"`
 
 	Config Config `json:"config"`
 
-	// Inputs lists every file read, in reading order, for a trace replay.
-	// A file never reached, because the run ended early, is not included.
-	Inputs []capture.FileStat `json:"inputs,omitempty"`
-
-	// Live describes a live capture.
+	// Live describes where the kernel counted the traffic.
 	Live *Live `json:"live,omitempty"`
 
 	Stats Stats `json:"stats"`
@@ -92,22 +77,22 @@ type Run struct {
 	Notes []string `json:"notes"`
 }
 
-// Live describes a live capture: where it listened, and how many packets
-// were lost at each layer below the detector.
+// Live describes a run: where the XDP program's maps were read from, and
+// how many packets the interface lost before XDP.
 type Live struct {
-	Interface string `json:"interface"`
+	// Interface is the interface the XDP program is attached to, used
+	// only to read its counters. Empty if not given.
+	Interface string `json:"interface,omitempty"`
 
-	// Duration is the requested capture length, empty for no limit.
+	// PinDir is the directory the sketch maps were opened from.
+	PinDir string `json:"pin_dir"`
+
+	// TAIOffsetSeconds is CLOCK_TAI minus CLOCK_REALTIME at start, the
+	// offset subtracted from the window bounds in windows.csv.
+	TAIOffsetSeconds int64 `json:"tai_offset_seconds"`
+
+	// Duration is the requested run length, empty for no limit.
 	Duration string `json:"duration,omitempty"`
-
-	// RequestedRecvBuffer is the -rcvbuf value; zero means the system
-	// default was kept.
-	RequestedRecvBuffer int `json:"requested_recv_buffer_bytes"`
-
-	// Socket is the AF_PACKET socket's own view: packets offered to it,
-	// packets it dropped for lack of buffer space, and how packets were
-	// timestamped.
-	Socket capture.LiveStats `json:"socket"`
 
 	// NICStart and NICEnd are the interface counters at start and end,
 	// and NICDelta their difference. NICWarnings records counters that
@@ -128,18 +113,15 @@ type Version struct {
 // Config is the full configuration of a run, flattened to plain values.
 type Config struct {
 	WindowLength string `json:"window_length"`
-	MaxEmpty     int    `json:"max_empty"`
+	Mode         string `json:"mode"`
 
-	Counts string `json:"counts"`
-	Mode   string `json:"mode"`
-
-	Depth     int     `json:"hk_depth"`
-	Width     int     `json:"hk_width"`
-	DecayBase float64 `json:"hk_decay_base"`
-	K         int     `json:"k"`
-	Seed      uint64  `json:"seed"`
-	CMSWidth  uint64  `json:"cms_width"`
-	CMSDepth  uint64  `json:"cms_depth"`
+	// Depth, Width and TopK are the kernel sketch's compiled-in
+	// dimensions, as mirrored by the heavykeeper package; K is how many
+	// of its candidates are evaluated per window.
+	Depth int `json:"hk_depth"`
+	Width int `json:"hk_width"`
+	TopK  int `json:"hk_topk"`
+	K     int `json:"k"`
 
 	BaseThreshold    float64 `json:"iqr_base_threshold"`
 	IQRMultiplier    float64 `json:"iqr_multiplier"`
@@ -154,8 +136,9 @@ type Config struct {
 
 // Stats summarizes the run.
 type Stats struct {
+	// Packets is the total counted by the kernel over the windows handed
+	// to the detector.
 	Packets uint64 `json:"packets"`
-	Skipped uint64 `json:"skipped_frames"`
 
 	Window window.Stats `json:"windows"`
 
@@ -164,7 +147,7 @@ type Stats struct {
 	FlaggedIPRows    uint64 `json:"flagged_ip_rows"`
 
 	// Dropped is the incomplete last window, discarded rather than
-	// evaluated. Nil if no packet was read.
+	// evaluated. Nil if the run ended before any window was opened.
 	Dropped *window.Dropped `json:"dropped_last_window"`
 
 	TrackedIPs uint64 `json:"tracked_ips"`

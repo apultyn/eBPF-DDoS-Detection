@@ -1,3 +1,5 @@
+// Package capture reads the receiving interface's counters, so a run can
+// show how many packets were lost before XDP saw them.
 package capture
 
 import (
@@ -17,7 +19,7 @@ import (
 // the driver handed to the kernel and what it dropped on the way; the
 // ethtool counters are driver-specific and include what the card itself
 // dropped, for example for lack of receive descriptors, before the kernel
-// ever saw it. Comparing them with the socket's own drop counter shows at
+// ever saw it. Comparing them with the packets XDP counted shows at
 // which layer packets were lost.
 type NICCounters map[string]uint64
 

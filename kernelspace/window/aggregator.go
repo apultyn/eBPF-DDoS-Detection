@@ -1,110 +1,43 @@
 package window
 
 import (
-	"errors"
 	"fmt"
-	"math/bits"
 	"time"
 
-	"github.com/apultyn/eBPF-DDoS-Detection/userspace/capture"
-	"github.com/apultyn/eBPF-DDoS-Detection/userspace/epoch"
+	"github.com/apultyn/eBPF-DDoS-Detection/kernelspace/epoch"
+	"github.com/apultyn/eBPF-DDoS-Detection/kernelspace/heavykeeper"
 )
 
-// Config holds the window length and the parameters of the structures
-// kept in every window.
+// Config holds the settings of the windows.
+//
+// The sketch dimensions are not configurable here: they are compiled
+// into heavy_keeper.c and mirrored by the heavykeeper package.
 type Config struct {
-	// Length is the length of one tumbling window.
+	// Length is the length of one tumbling window. It must equal the
+	// kernel's window length, which XDP applies as a shift by 29, so it
+	// can only be epoch.DefaultLength.
 	Length time.Duration
 
-	// MaxEmpty is the largest number of consecutive empty windows that
-	// are closed during a pause in traffic before the aggregator gives up
-	// and jumps straight to the epoch of the next packet, recording the
-	// jump in Window.SkippedBefore. Zero disables jumping: every empty
-	// window is closed, however long the pause.
-	//
-	// Use PcapMaxEmpty for trace files and LiveMaxEmpty for live capture.
-	MaxEmpty int
-
-	// Depth, Width, DecayBase and K configure each window's HeavyKeeper
-	// sketch and candidate set. Width must be a power of two.
-	Depth     int
-	Width     int
-	DecayBase float64
-	K         int
-
-	// Seed seeds the first window's HeavyKeeper; the second uses Seed+1.
-	// With a fixed seed a trace replay is fully reproducible.
-	Seed uint64
-
-	// Counts selects where per-IP counts are read from.
-	Counts CountSource
-
-	// CMSWidth and CMSDepth size the Count-Min Sketch. Only used when
-	// Counts is CountCountMin.
-	CMSWidth uint64
-	CMSDepth uint64
+	// K is how many of the kernel's candidates are passed on per window,
+	// at most heavykeeper.K. The IQR shared history is sized for the
+	// default of 10.
+	K int
 }
 
-const (
-	// PcapMaxEmpty is the empty-window limit for trace files. Datasets
-	// such as CIC-DDoS2019 are split into many files with gaps between
-	// the recordings; those gaps are artifacts of the dataset, not quiet
-	// traffic, and must not flood the history with zeros.
-	PcapMaxEmpty = 10
-
-	// LiveMaxEmpty is the empty-window limit for live capture, where a
-	// quiet period is real data. Jumping is disabled so that a stall in
-	// the capture shows up as empty windows instead of being hidden.
-	LiveMaxEmpty = 0
-)
-
 // DefaultConfig returns the configuration the detector is evaluated with.
-//
-// MaxEmpty is set for live capture; set it to PcapMaxEmpty when replaying
-// trace files.
-//
-// The Count-Min dimensions give it the same 32 KB as the HeavyKeeper
-// sketch (4 x 1024 counters of 8 bytes), so switching count source
-// compares the two at equal memory.
 func DefaultConfig() Config {
 	return Config{
-		Length:    epoch.DefaultLength,
-		MaxEmpty:  LiveMaxEmpty,
-		Depth:     4,
-		Width:     1024,
-		DecayBase: 1.08,
-		K:         10,
-		Seed:      42,
-		Counts:    CountHeavyKeeper,
-		CMSWidth:  1024,
-		CMSDepth:  4,
+		Length: epoch.DefaultLength,
+		K:      10,
 	}
 }
 
 func (c Config) validate() error {
 	switch {
-	case c.Length <= 0:
-		return errors.New("window length must be positive")
-	case c.MaxEmpty < 0:
-		return errors.New("MaxEmpty must not be negative")
-	case c.Depth <= 0:
-		return errors.New("depth must be positive")
-	case c.Width <= 0 || bits.OnesCount(uint(c.Width)) != 1:
-		return errors.New("width must be a power of two")
-	case c.DecayBase <= 1:
-		return errors.New("decay base must be greater than 1")
-	case c.K <= 0:
-		return errors.New("k must be positive")
-	}
-
-	switch c.Counts {
-	case CountHeavyKeeper:
-	case CountCountMin:
-		if c.CMSWidth == 0 || c.CMSDepth == 0 {
-			return errors.New("Count-Min width and depth must be positive")
-		}
-	default:
-		return fmt.Errorf("unknown count source %v", c.Counts)
+	case c.Length != epoch.DefaultLength:
+		return fmt.Errorf("window length must be %v to match the kernel, got %v", epoch.DefaultLength, c.Length)
+	case c.K <= 0 || c.K > heavykeeper.K:
+		return fmt.Errorf("k must be between 1 and %d, the size of the kernel's Top-K table", heavykeeper.K)
 	}
 
 	return nil
@@ -117,9 +50,9 @@ type Closed struct {
 	Window *Window
 
 	// Prev is the window for the epoch immediately before Window, or nil
-	// when there is none: for the very first window, and for the first
-	// window after a jump. A combined count may only be formed when Prev
-	// is non-nil.
+	// when it cannot be combined with: for the first evaluated window,
+	// after a jump, and when its slot was not read intact. A combined
+	// count may only be formed when Prev is non-nil.
 	Prev *Window
 
 	// ClosedAt is the wall-clock time the window was closed, the starting
@@ -143,108 +76,128 @@ type Stats struct {
 	Closed uint64 `json:"closed"`
 	Empty  uint64 `json:"empty"`
 
-	// Jumps is the number of times a long pause was skipped, and
-	// SkippedEpochs the total number of epochs skipped by them.
+	// Discarded is the number of windows that ended but were not handed
+	// to the callback because their slot did not hold exactly their
+	// traffic: the window running when the aggregator started, and
+	// windows whose slot was cleared too late after falling behind.
+	Discarded uint64 `json:"discarded"`
+
+	// Jumps is the number of times the aggregator fell so far behind that
+	// the kernel had reused slots it had not read yet, and SkippedEpochs
+	// the total number of epochs lost to those jumps. A non-zero value
+	// means the evaluation does not keep up with the window length.
 	Jumps         uint64 `json:"jumps"`
 	SkippedEpochs uint64 `json:"skipped_epochs"`
-
-	// Late is the number of packets dropped because their timestamp fell
-	// in an epoch that had already closed. Both trace files and a single
-	// live interface deliver packets in timestamp order, so a non-zero
-	// value means that assumption does not hold for the input.
-	Late uint64 `json:"late_packets"`
 }
 
-// Aggregator assigns packets to windows and closes windows as time passes.
+// Aggregator closes windows as time passes and hands each one to a
+// callback, read back from the kernel through a Source.
 //
-// It owns exactly two windows, the current one and the previous one, and
-// swaps their roles each time a window closes. Not safe for concurrent
-// use.
+// Windows are driven by the clock, not by packets: XDP picks the slot of
+// a packet from the kernel's CLOCK_TAI, so the aggregator's clock must be
+// the same one, or it reads a different slot from the one the kernel is
+// writing.
+//
+// A slot is reused every heavykeeper.Slots windows. Closing window e
+// reads slots e and e-1 and then clears slot e+2, which the kernel only
+// starts writing a full window later. As long as Tick is called within a
+// window of each boundary, no slot is cleared while it is being read or
+// written. When the aggregator falls further behind, the windows whose
+// slots could not be cleared in time are discarded rather than evaluated
+// with mixed counts. The clock is read again after every step that can
+// take time, so a slow callback is noticed as well as a late Tick.
+//
+// The aggregator owns two windows, the current one and the previous one,
+// and swaps their roles each time a window closes. Not safe for
+// concurrent use.
 type Aggregator struct {
 	cfg     Config
-	onClose func(Closed)
+	src     Source
+	clock   func() time.Time
+	onClose func(Closed) error
 	now     func() time.Time
 
 	cur  *Window
 	prev *Window
 
-	// emptyRun is the number of consecutive empty windows closed so far.
-	emptyRun int
+	// nextClean is whether the slot of the window after cur was cleared
+	// before the kernel began writing it.
+	nextClean bool
 
 	stats Stats
 }
 
-// NewAggregator creates an aggregator that calls onClose, on the calling
-// goroutine, each time a window closes.
-func NewAggregator(cfg Config, onClose func(Closed)) (*Aggregator, error) {
+// NewAggregator creates an aggregator that reads windows from src and
+// calls onClose, on the calling goroutine, each time a window closes. An
+// error from onClose is returned by the Tick that closed the window.
+//
+// clock must read CLOCK_TAI, the clock XDP assigns packets to windows by.
+func NewAggregator(cfg Config, src Source, clock func() time.Time, onClose func(Closed) error) (*Aggregator, error) {
 	if err := cfg.validate(); err != nil {
 		return nil, fmt.Errorf("window: %w", err)
 	}
 
 	return &Aggregator{
 		cfg:     cfg,
+		src:     src,
+		clock:   clock,
 		onClose: onClose,
 		now:     time.Now,
 	}, nil
 }
 
-// Observe adds a packet, first closing every window that ended before the
-// packet's timestamp.
+// Tick closes every window that has ended.
 //
-// Windows are driven by packet timestamps. For a trace file that is the
-// trace's own clock, which makes a replay independent of how fast it is
-// read; for a live capture the timestamp is the arrival time, so it is
-// the wall clock.
-func (a *Aggregator) Observe(p capture.Packet) {
-	e := epoch.Of(p.Timestamp, a.cfg.Length)
-
-	switch {
-	case a.cur == nil:
-		a.cur = newWindow(a.cfg, a.cfg.Seed)
-		a.cur.reset(e)
-
-	case e > a.cur.Epoch:
-		a.advanceTo(e, true)
-
-	case e < a.cur.Epoch:
-		// The packet's window has already been evaluated. Counting it in
-		// the current one would place it in an epoch its timestamp does
-		// not belong to, so it is dropped and reported instead.
-		a.stats.Late++
-		a.cur.Late++
-
-		return
-	}
-
-	a.cur.observe(p)
-}
-
-// Advance closes every window that ended at or before now, without a
-// packet having arrived. A live capture calls it when a read times out,
-// so windows close on time even when traffic stops.
+// The first call starts the aggregator: it clears every slot and opens
+// the current window. That window began before the aggregator was
+// watching, so it is discarded when it ends, and the first window handed
+// to the callback is the one after it.
 //
-// With MaxEmpty set, Advance closes at most that many consecutive empty
-// windows. After that the aggregator waits for the next packet and jumps
-// to its epoch.
-func (a *Aggregator) Advance(now time.Time) {
+// The caller should call Tick shortly after Deadline. A small grace
+// period past the deadline lets packets the kernel stamped just before
+// the boundary finish their way through XDP on other CPUs.
+func (a *Aggregator) Tick() error {
 	if a.cur == nil {
-		return
+		return a.restart(a.epochNow(), 0)
 	}
 
-	if e := epoch.Of(now, a.cfg.Length); e > a.cur.Epoch {
-		a.advanceTo(e, false)
+	for {
+		// Read for every window: closing one can take long enough for
+		// the kernel to move on.
+		n := a.epochNow()
+		if a.cur.Epoch >= n {
+			return nil
+		}
+
+		// Every slot has been reused since cur began: nothing left
+		// unread is intact, so start over from the current epoch.
+		if n-a.cur.Epoch >= heavykeeper.Slots {
+			lost := int64(n - a.cur.Epoch)
+
+			a.stats.Jumps++
+			a.stats.SkippedEpochs += uint64(lost)
+
+			return a.restart(n, a.cur.SkippedBefore+lost)
+		}
+
+		if err := a.close(n); err != nil {
+			return err
+		}
 	}
 }
 
-// Deadline returns when the current window ends, which is how long a live
-// capture should wait for a packet before calling Advance. It returns
-// false when nothing is due: before the first packet, and after MaxEmpty
-// empty windows, when the next window only opens with the next packet.
+// epochNow returns the epoch the kernel is in.
+func (a *Aggregator) epochNow() epoch.Epoch {
+	return epoch.Of(a.clock(), a.cfg.Length)
+}
+
+// Deadline returns when the current window ends, which is when Tick
+// should next be called. It returns false before the first Tick.
 //
-// The deadline may already have passed if the caller fell behind; Advance
+// The deadline may already have passed if the caller fell behind; Tick
 // then catches up.
 func (a *Aggregator) Deadline() (time.Time, bool) {
-	if a.cur == nil || a.dormant() {
+	if a.cur == nil {
 		return time.Time{}, false
 	}
 
@@ -252,21 +205,23 @@ func (a *Aggregator) Deadline() (time.Time, bool) {
 }
 
 // Finish discards the current window, which is incomplete, and returns
-// what it held so the caller can log it. It returns false if no packet
-// was ever observed.
+// what it held so the caller can log it. It returns false if Tick was
+// never called. The totals are read best-effort: if the read fails they
+// are reported as zero.
 func (a *Aggregator) Finish() (Dropped, bool) {
 	if a.cur == nil {
 		return Dropped{}, false
 	}
 
 	w := a.cur
+	packets, bytes, _ := a.src.Totals(w.slot)
 
 	return Dropped{
 		Epoch:   w.Epoch,
 		Start:   w.Start,
 		End:     w.End,
-		Packets: w.Packets,
-		Bytes:   w.Bytes,
+		Packets: packets,
+		Bytes:   bytes,
 	}, true
 }
 
@@ -275,69 +230,98 @@ func (a *Aggregator) Stats() Stats {
 	return a.stats
 }
 
-// dormant reports whether the current window is an empty one that will
-// not be closed, because MaxEmpty empty windows have already been.
-func (a *Aggregator) dormant() bool {
-	return a.cfg.MaxEmpty > 0 &&
-		a.cur.Packets == 0 &&
-		a.emptyRun >= a.cfg.MaxEmpty
+// restart clears every slot and opens epoch n as an unevaluated window,
+// recording skipped epochs before it. It is how the aggregator starts,
+// and how it recovers after falling too far behind.
+func (a *Aggregator) restart(n epoch.Epoch, skipped int64) error {
+	for slot := 0; slot < heavykeeper.Slots; slot++ {
+		if err := a.src.Reset(slot); err != nil {
+			return fmt.Errorf("window: %w", err)
+		}
+	}
+
+	if a.cur == nil {
+		a.cur = newWindow(a.cfg, a.src)
+	}
+
+	// The kernel has been writing n since it began, and its slot was
+	// just cleared under it, so n is not clean. The slots of every later
+	// window are clean: they were cleared before the kernel reached them.
+	a.cur.reset(n, false)
+	a.cur.SkippedBefore = skipped
+	a.nextClean = true
+
+	// Nothing before n may be combined with.
+	a.prev = nil
+
+	return nil
 }
 
-// advanceTo closes windows until the current one is epoch e. When the
-// empty-window limit is reached it jumps straight to e if jump is set,
-// and otherwise stops and leaves the jump to the next packet.
-func (a *Aggregator) advanceTo(e epoch.Epoch, jump bool) {
-	for a.cur.Epoch < e {
-		if a.dormant() {
-			if !jump {
-				return
-			}
+// close hands the current window to the callback, clears the slot two
+// windows ahead, and makes the current window the previous one. n is the
+// epoch the kernel is in, which may be several windows past the current
+// one when the aggregator is catching up.
+func (a *Aggregator) close(n epoch.Epoch) error {
+	w := a.cur
+	e := w.Epoch
 
-			skipped := uint64(e - a.cur.Epoch)
+	var cbErr error
 
-			a.cur.SkippedBefore += int64(skipped)
-			a.cur.setEpoch(e)
+	// carry is the gap the next window reports in SkippedBefore: the
+	// gap this window was carrying plus this window itself, when it is
+	// not evaluated. The start window is not a gap; nothing was
+	// evaluated before it.
+	var carry int64
 
-			a.stats.Jumps++
-			a.stats.SkippedEpochs += skipped
-
-			return
+	if w.clean {
+		if err := w.load(); err != nil {
+			return err
 		}
 
-		a.close()
-	}
-}
+		// The previous window's slot is the next one the kernel reuses,
+		// at e+3; it is only intact for combining before that.
+		var prev *Window
+		if a.prev != nil && a.prev.clean && a.prev.Epoch == e-1 && n <= e+2 {
+			prev = a.prev
+		}
 
-// close hands the current window to the callback and makes it the
-// previous window, recycling the old previous window as the new current
-// one.
-func (a *Aggregator) close() {
-	w := a.cur
+		if w.Packets == 0 {
+			a.stats.Empty++
+		}
+		a.stats.Closed++
 
-	if w.Packets == 0 {
-		a.emptyRun++
-		a.stats.Empty++
+		cbErr = a.onClose(Closed{Window: w, Prev: prev, ClosedAt: a.now()})
 	} else {
-		a.emptyRun = 0
+		start := a.stats.Closed == 0 && a.stats.Discarded == 0
+
+		carry = w.SkippedBefore
+		if !start {
+			carry++
+		}
+
+		a.stats.Discarded++
 	}
 
-	// Only an adjacent window may be combined with this one. After a
-	// jump the previous window is from before the pause.
-	var prev *Window
-	if a.prev != nil && a.prev.Epoch == w.Epoch-1 {
-		prev = a.prev
+	// Slot e+2 held e-2, which is no longer needed. It is clean for e+2
+	// only if the kernel had not started writing e+2 yet when the clear
+	// finished. The clock is read again here, not taken from n: the
+	// callback above may have taken long enough for the kernel to move on.
+	if err := a.src.Reset(int(e+2) & (heavykeeper.Slots - 1)); err != nil {
+		return fmt.Errorf("window: %w", err)
 	}
-
-	a.stats.Closed++
-	a.onClose(Closed{Window: w, Prev: prev, ClosedAt: a.now()})
+	clean2 := a.epochNow() <= e+1
 
 	next := a.prev
 	if next == nil {
-		next = newWindow(a.cfg, a.cfg.Seed+1)
+		next = newWindow(a.cfg, a.src)
 	}
 
-	next.reset(w.Epoch + 1)
+	next.reset(e+1, a.nextClean)
+	next.SkippedBefore = carry
+	a.nextClean = clean2
 
 	a.prev = w
 	a.cur = next
+
+	return cbErr
 }

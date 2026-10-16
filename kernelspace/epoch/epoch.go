@@ -23,7 +23,7 @@ package epoch
 import "time"
 
 // DefaultLength is the window length used by the detector.
-const DefaultLength = 500 * time.Millisecond
+const DefaultLength = (1 << 29) * time.Nanosecond
 
 // Epoch numbers a window. Consecutive windows have consecutive numbers.
 type Epoch int64

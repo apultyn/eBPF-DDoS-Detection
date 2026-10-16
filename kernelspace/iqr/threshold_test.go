@@ -4,7 +4,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/apultyn/eBPF-DDoS-Detection/userspace/flow"
+	"github.com/apultyn/eBPF-DDoS-Detection/kernelspace/flow"
 )
 
 func approxEqual(t *testing.T, got, want, tolerance float64) {

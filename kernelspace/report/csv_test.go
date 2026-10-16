@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/apultyn/eBPF-DDoS-Detection/userspace/detector"
-	"github.com/apultyn/eBPF-DDoS-Detection/userspace/flow"
-	"github.com/apultyn/eBPF-DDoS-Detection/userspace/iqr"
-	"github.com/apultyn/eBPF-DDoS-Detection/userspace/resource"
+	"github.com/apultyn/eBPF-DDoS-Detection/kernelspace/detector"
+	"github.com/apultyn/eBPF-DDoS-Detection/kernelspace/flow"
+	"github.com/apultyn/eBPF-DDoS-Detection/kernelspace/iqr"
+	"github.com/apultyn/eBPF-DDoS-Detection/kernelspace/resource"
 )
 
 func readCSV(t *testing.T, path string) []map[string]string {
@@ -56,11 +56,11 @@ func TestCSVSink(t *testing.T) {
 		{Epoch: 10, Start: start, End: start.Add(500 * time.Millisecond), Packets: 7, Bytes: 700,
 			KernelDrops: -1, ClosedAt: closed},
 
-		// A window after a jump with late packets, evaluated, threshold
+		// A window after skipped windows, evaluated, threshold
 		// from the floor, one flagged source and one in warm-up.
 		{
 			Epoch: 20, Start: start.Add(5 * time.Second), End: start.Add(5500 * time.Millisecond),
-			SkippedBefore: 9, Packets: 50, Bytes: 5000, Late: 2, KernelDrops: 13,
+			SkippedBefore: 9, Packets: 50, Bytes: 5000, KernelDrops: 13,
 			Evaluated: true, EvaluatedPackets: 90,
 			Verdict: iqr.Verdict{Threshold: 210.5, QuartileBound: 120, FromFloor: true},
 			IPs: []detector.IPResult{
@@ -107,7 +107,6 @@ func TestCSVSink(t *testing.T) {
 		"epoch":             "20",
 		"start_ns":          "1700000005000000000",
 		"skipped_before":    "9",
-		"late":              "2",
 		"kernel_drops":      "13",
 		"evaluated_packets": "90",
 		"threshold":         "210.50",

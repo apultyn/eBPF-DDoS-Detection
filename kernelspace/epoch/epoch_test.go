@@ -8,17 +8,19 @@ import (
 func TestOf(t *testing.T) {
 	const l = DefaultLength
 
-	base := time.Unix(1_700_000_000, 0) // a whole second, so on a boundary
+	// An epoch from late 2023, and the instant it starts.
+	const e0 Epoch = 3_166_496_754
+	base := time.Unix(0, int64(e0)*int64(l))
 
 	tests := []struct {
 		name string
 		t    time.Time
 		want Epoch
 	}{
-		{"on a boundary", base, 3_400_000_000},
-		{"just after a boundary", base.Add(time.Nanosecond), 3_400_000_000},
-		{"just before the next boundary", base.Add(l - time.Nanosecond), 3_400_000_000},
-		{"on the next boundary", base.Add(l), 3_400_000_001},
+		{"on a boundary", base, e0},
+		{"just after a boundary", base.Add(time.Nanosecond), e0},
+		{"just before the next boundary", base.Add(l - time.Nanosecond), e0},
+		{"on the next boundary", base.Add(l), e0 + 1},
 		{"unix epoch", time.Unix(0, 0), 0},
 		{"before the unix epoch", time.Unix(0, -1), -1},
 	}
@@ -29,6 +31,20 @@ func TestOf(t *testing.T) {
 				t.Errorf("Of(%v) = %d, want %d", tt.t, got, tt.want)
 			}
 		})
+	}
+}
+
+// The kernel numbers windows as bpf_ktime_get_tai_ns() >> 29. Both sides
+// must agree on every epoch, or the detector reads the wrong slot.
+func TestMatchesKernelShift(t *testing.T) {
+	if DefaultLength != 1<<29 {
+		t.Fatalf("DefaultLength = %v, heavy_keeper.c shifts by 29", DefaultLength)
+	}
+
+	for _, ns := range []int64{0, 1, 1<<29 - 1, 1 << 29, 1_700_000_000_123_456_789, 1<<62 + 12345} {
+		if got, want := FromNanos(ns, DefaultLength), Epoch(uint64(ns)>>29); got != want {
+			t.Errorf("FromNanos(%d) = %d, kernel computes %d", ns, got, want)
+		}
 	}
 }
 
