@@ -170,6 +170,16 @@ struct { // Top k map for buffer 3
     __uint(pinning, LIBBPF_PIN_BY_NAME); // Pin filepath ending to struct name
 } topk_map_3 SEC(".maps");
 
+struct slot_stats { u64 packets; u64 bytes; };
+
+struct {
+    uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+    uint(max_entries, SLOTS);
+    type(key, u32);
+    type(value, struct slot_stats);
+    uint(pinning, LIBBPF_PIN_BY_NAME);
+} slot_stats SEC(".maps");
+
 
 // ----- Helper Functions ----- //
 
@@ -495,6 +505,15 @@ int heavy_keeper(struct xdp_md *ctx)
     }
 
     int sketch_index = get_sketch_index();
+
+    // Update packet count for slot_stats
+    __u32 key = sketch_index;
+    struct slot_stats *st = bpf_map_lookup_elem(&slot_stats, &key);
+    if (st) {
+        st->packets++;
+        st->bytes += ctx->data_end - ctx->data;
+    }
+    
     // Hash IP, decay and add to corresponding bucket
     update(&unified_ip, sketch_index);
     
