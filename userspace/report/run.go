@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/apultyn/eBPF-DDoS-Detection/userspace/capture"
+	"github.com/apultyn/eBPF-DDoS-Detection/userspace/mitigate"
 	"github.com/apultyn/eBPF-DDoS-Detection/userspace/window"
 )
 
@@ -69,6 +70,33 @@ const SentPacketsNote = "The number of packets sent is not recorded here: the " 
 	"next to this run.json; together with live.socket and live.nic_delta it " +
 	"shows how many packets were lost before the detector and at which layer."
 
+// BlocklistNote explains blocking, for runs that had it on.
+const BlocklistNote = "Sources flagged by their per-IP verdict were added to the " +
+	"blocklist of blocklist.c, an XDP program on the interface, which dropped their " +
+	"packets before they reached the capture socket. Dropped packets are not in " +
+	"packets/bytes, kernel_drops or live.socket, nor in any count the thresholds " +
+	"see; they are in blocked_packets/blocked_bytes. Unlike the kernel-space " +
+	"detector's, these are counted when a window closes, not by the time of the " +
+	"dropped packet: a window's figure is what was dropped since the previous " +
+	"window closed, including the grace period after the window's end. " +
+	"blocked_at_ns - end_ns is the delay from the end of the window to the " +
+	"sources being blocked. A source stays blocked for block_ttl after it was " +
+	"last flagged (0: until the run ends); when the blocklist is full, the source " +
+	"XDP saw last in the oldest window is evicted, the one with the fewest drops " +
+	"among equals. The blocklist is cleared when the run starts but not when it " +
+	"ends."
+
+// BPFMemoryNote explains bpf_memory.
+const BPFMemoryNote = "bpf_memory is the kernel memory of the XDP blocklist's maps, " +
+	"each as the kernel reports it (memlock in the map's fdinfo: computed per " +
+	"map type from Linux 6.4 on, estimated from the map's dimensions before). " +
+	"The maps are charged to the memory cgroup of the process that loaded " +
+	"blocklist.o (ip link), not to the detector's, so memwatch's main for the " +
+	"detector does not include them. Both maps are per-CPU, grow with the number " +
+	"of possible CPUs, and are preallocated, so their memory does not depend on " +
+	"the traffic. The program itself, its instructions and JIT image, is not " +
+	"included."
+
 // How a run ended.
 const (
 	EndSourceEnded     = "source_ended"
@@ -105,7 +133,27 @@ type Run struct {
 
 	Stats Stats `json:"stats"`
 
+	// BPFMemory is the kernel memory of the XDP blocklist's maps. Nil when
+	// blocking was off.
+	BPFMemory *BPFMemory `json:"bpf_memory,omitempty"`
+
 	Notes []string `json:"notes"`
+}
+
+// BPFMemory is the kernel memory of the XDP blocklist's maps, as the
+// kernel reports it for each map.
+type BPFMemory struct {
+	// Maps is each map's memory at the end of the run, by pin name. Nil
+	// if it could not be read.
+	Maps map[string]uint64 `json:"maps,omitempty"`
+
+	// TotalBytes is the sum of Maps, and StartTotalBytes the same sum at
+	// the start of the run. The maps are preallocated, so the two should
+	// be equal; a warning says when they are not. Zero if not read.
+	TotalBytes      uint64 `json:"total_bytes"`
+	StartTotalBytes uint64 `json:"start_total_bytes"`
+
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // Live describes a live capture: where it listened, and how many packets
@@ -124,6 +172,12 @@ type Live struct {
 	// packets it dropped for lack of buffer space, and how packets were
 	// timestamped.
 	Socket capture.LiveStats `json:"socket"`
+
+	// BlocklistPinned reports that the maps of blocklist.c were pinned at
+	// start, so the XDP blocklist was most likely attached and every
+	// packet passed through it before the socket, even with blocking off.
+	// It is always true when blocking was on.
+	BlocklistPinned bool `json:"blocklist_pinned"`
 
 	// NICStart and NICEnd are the interface counters at start and end,
 	// and NICDelta their difference. NICWarnings records counters that
@@ -166,6 +220,13 @@ type Config struct {
 
 	IPMode               string `json:"iqr_ip_mode"`
 	MaxSharedHistorySize int    `json:"iqr_max_shared_history"`
+
+	// Block reports whether flagged sources were blocked. BlockTTL,
+	// BlockCapacity and BlockAllow are only set when they were.
+	Block         bool     `json:"block"`
+	BlockTTL      string   `json:"block_ttl,omitempty"`
+	BlockCapacity int      `json:"block_capacity,omitempty"`
+	BlockAllow    []string `json:"block_allow,omitempty"`
 }
 
 // Stats summarizes the run.
@@ -185,6 +246,12 @@ type Stats struct {
 
 	TrackedIPs uint64 `json:"tracked_ips"`
 	EvictedIPs uint64 `json:"evicted_ips"`
+
+	// BlockedPackets is the total dropped by the XDP blocklist over the
+	// windows evaluated, and Blocklist what the detector did with the
+	// blocklist. Blocklist is nil when blocking was off.
+	BlockedPackets uint64          `json:"blocked_packets"`
+	Blocklist      *mitigate.Stats `json:"blocklist,omitempty"`
 
 	WallSeconds      float64 `json:"wall_seconds"`
 	PacketsPerSecond float64 `json:"packets_per_second"`

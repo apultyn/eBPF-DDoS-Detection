@@ -75,6 +75,11 @@ type IPResult struct {
 
 	// Verdict is the source's per-IP IQR verdict.
 	Verdict iqr.Verdict
+
+	// Blocked reports that the source is on the blocklist because of this
+	// verdict, newly added or with its TTL restarted. It is set by the
+	// caller, and is always false when blocking is off.
+	Blocked bool
 }
 
 // WindowResult is the evaluation of one closed window.
@@ -102,6 +107,13 @@ type WindowResult struct {
 	// not measured, as for trace files.
 	KernelDrops int64
 
+	// BlockedPackets and BlockedBytes are what the XDP blocklist dropped
+	// between the previous window closing and this one; the packets never
+	// reached the socket, so they are not part of Packets and Bytes. They
+	// are set by the caller, and are zero when blocking is off.
+	BlockedPackets uint64
+	BlockedBytes   uint64
+
 	// Evaluated is false when the window could not be judged: in
 	// ModeCombined, when there is no adjacent previous window to combine
 	// with (the first window, and the first after a jump). Nothing is
@@ -125,6 +137,10 @@ type WindowResult struct {
 	ClosedAt  time.Time
 	EvalStart time.Time
 	EvalEnd   time.Time
+
+	// BlockedAt is the wall-clock time the flagged sources were pushed to
+	// the blocklist, set by the caller. It is zero if none were.
+	BlockedAt time.Time
 
 	// Resources is the detector process's own memory and CPU use over the
 	// interval since the previous window was evaluated, up to and
