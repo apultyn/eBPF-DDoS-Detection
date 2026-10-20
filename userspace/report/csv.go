@@ -41,17 +41,18 @@ var windowColumns = []string{
 	"flagged_ips",
 	"closed_at_ns", "eval_start_ns", "eval_end_ns",
 	"heap_alloc_bytes", "user_cpu_ns", "sys_cpu_ns", "cpu_interval_ns", "cpu_share",
+	"blocked_packets", "blocked_bytes", "blocked_at_ns",
 	"host_busy_ns", "host_total_ns", "host_softirq_ns", "host_max_core_share",
 }
 
 // ipColumns is the header of ips.csv. Rows join windows.csv on epoch.
-// threshold_source is last so that the columns before it keep the
-// positions they had before it was added.
+// threshold_source and blocked are last so that the columns before them
+// keep the positions they had before they were added.
 var ipColumns = []string{
 	"epoch", "ip",
 	"current", "previous", "evaluated",
 	"warm_up", "threshold", "quartile_bound", "threshold_term", "malicious",
-	"threshold_source",
+	"threshold_source", "blocked",
 }
 
 // CSVSink writes windows.csv and ips.csv.
@@ -145,6 +146,7 @@ func (s *CSVSink) Write(r *detector.WindowResult) error {
 
 	row = append(row, ns(r.ClosedAt), ns(r.EvalStart), ns(r.EvalEnd))
 	row = appendResources(row, r.Resources)
+	row = append(row, u(r.BlockedPackets), u(r.BlockedBytes), ns(r.BlockedAt))
 	row = appendHost(row, r.Resources)
 	s.row = row
 
@@ -159,7 +161,7 @@ func (s *CSVSink) Write(r *detector.WindowResult) error {
 			u(ip.Current), u(ip.Previous), u(ip.Evaluated),
 		)
 		row = appendVerdict(row, ip.Verdict)
-		row = append(row, thresholdSource(ip.Verdict))
+		row = append(row, thresholdSource(ip.Verdict), strconv.FormatBool(ip.Blocked))
 
 		if err := s.ips.Write(row); err != nil {
 			return err

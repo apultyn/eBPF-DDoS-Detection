@@ -33,6 +33,19 @@
 // Every window row also carries the detector's own heap in use and the
 // user and system CPU time it spent since the previous window, and the
 // CPU time the whole machine spent over the same interval (Linux only).
+//
+// With -block, every source flagged by its per-IP verdict is added to the
+// blocklist of blocklist.c, an XDP program attached to the interface
+// beforehand, which drops its packets before they reach the socket. A
+// source stays blocked for -block-ttl after it was last flagged. Sources
+// given with -allow are never blocked; include the host the experiment is
+// run from. -block only applies to live capture:
+//
+//	ip link set dev ens7 xdpgeneric obj blocklist.o sec xdp
+//	detector -iface ens7 -block -block-ttl 30s -allow 192.0.2.10 -out results/live2
+//
+// The blocklist is cleared at start whether or not -block is given, if it
+// is pinned, so an earlier run cannot skew this one.
 package main
 
 import (
@@ -47,9 +60,11 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/apultyn/eBPF-DDoS-Detection/userspace/blocklist"
 	"github.com/apultyn/eBPF-DDoS-Detection/userspace/capture"
 	"github.com/apultyn/eBPF-DDoS-Detection/userspace/detector"
 	"github.com/apultyn/eBPF-DDoS-Detection/userspace/iqr"
+	"github.com/apultyn/eBPF-DDoS-Detection/userspace/mitigate"
 	"github.com/apultyn/eBPF-DDoS-Detection/userspace/report"
 	"github.com/apultyn/eBPF-DDoS-Detection/userspace/resource"
 	"github.com/apultyn/eBPF-DDoS-Detection/userspace/window"
@@ -87,17 +102,24 @@ type options struct {
 	outDir   string
 	force    bool
 	quiet    bool
+
+	// block turns on pushing flagged sources to the XDP blocklist, whose
+	// maps are pinned in pinDir.
+	block  bool
+	pinDir string
 }
 
 func run() error {
 	wcfg := window.DefaultConfig()
 	dcfg := detector.DefaultConfig()
+	mcfg := mitigate.DefaultConfig()
 
 	var (
 		opt    options
 		counts string
 		mode   string
 		ipMode string
+		allow  string
 	)
 
 	flag.Var(&opt.inputs, "pcap", "trace file or directory of trace files; may be repeated")
@@ -134,19 +156,24 @@ func run() error {
 	flag.IntVar(&dcfg.IQR.MaxSharedHistorySize, "shared-history", dcfg.IQR.MaxSharedHistorySize,
 		"samples kept in the history shared by all sources (shared and hybrid modes)")
 
+	flag.BoolVar(&opt.block, "block", false, "add sources flagged by their per-IP verdict to the XDP blocklist (-iface only)")
+	flag.DurationVar(&mcfg.TTL, "block-ttl", mcfg.TTL, "how long a source stays blocked after it was last flagged; 0 until the run ends")
+	flag.StringVar(&allow, "allow", "", "comma-separated addresses that are never blocked")
+	flag.StringVar(&opt.pinDir, "pin-dir", blocklist.DefaultPinDir, "directory the XDP blocklist's maps are pinned in")
+
 	flag.Parse()
 
 	live := opt.iface != ""
 
-	switch {
-	case live == (len(opt.inputs) > 0):
-		flag.Usage()
-		return errors.New("give exactly one of -pcap or -iface")
-	case opt.outDir == "":
-		flag.Usage()
-		return errors.New("-out is required")
-	case !live && (opt.duration != 0 || opt.rcvbuf != 0):
-		return errors.New("-duration and -rcvbuf only apply to -iface")
+	if usage, err := checkOptions(opt); err != nil {
+		if usage {
+			flag.Usage()
+		}
+		return err
+	}
+
+	if mcfg.TTL < 0 {
+		return fmt.Errorf("-block-ttl %v is negative", mcfg.TTL)
 	}
 
 	// A quiet period on a live interface is real traffic information, so
@@ -169,15 +196,40 @@ func run() error {
 		return err
 	}
 
+	if mcfg.Allow, err = parseAllow(allow); err != nil {
+		return err
+	}
+
+	mcfg.WindowLength = wcfg.Length
+
 	if err := prepareOutput(opt.outDir, opt.force); err != nil {
 		return err
 	}
 
 	if live {
-		return runLive(opt, wcfg, dcfg)
+		return runLive(opt, wcfg, dcfg, mcfg)
 	}
 
-	return runTrace(opt, wcfg, dcfg)
+	return runTrace(opt, wcfg, dcfg, mcfg)
+}
+
+// checkOptions rejects combinations of options that do not make sense.
+// usage reports that the usage is worth printing along with the error.
+func checkOptions(opt options) (usage bool, err error) {
+	live := opt.iface != ""
+
+	switch {
+	case live == (len(opt.inputs) > 0):
+		return true, errors.New("give exactly one of -pcap or -iface")
+	case opt.outDir == "":
+		return true, errors.New("-out is required")
+	case !live && (opt.duration != 0 || opt.rcvbuf != 0):
+		return false, errors.New("-duration and -rcvbuf only apply to -iface")
+	case !live && opt.block:
+		return false, errors.New("-block only applies to -iface; a trace replay has no traffic to drop")
+	}
+
+	return false, nil
 }
 
 // session is a run in progress: the pipeline and its accumulated stats.
@@ -198,6 +250,18 @@ type session struct {
 	drops     func() (uint64, bool)
 	lastDrops uint64
 
+	// mcfg is the blocking configuration, reported in run.json.
+	mcfg mitigate.Config
+
+	// mit pushes flagged sources to the blocklist bl, and clock is
+	// CLOCK_TAI, the clock the blocklist's times are on. All three are
+	// nil when blocking is off. lastBlocked is bl's totals when the
+	// previous window closed.
+	mit         *mitigate.Mitigator
+	bl          blocklistMap
+	clock       func() time.Time
+	lastBlocked blocklist.Totals
+
 	// resources samples the process's memory and CPU once per window.
 	resources *resource.Sampler
 
@@ -208,8 +272,8 @@ type session struct {
 	progress func() string
 }
 
-func newSession(opt options, wcfg window.Config, dcfg detector.Config) (*session, error) {
-	s := &session{opt: opt, wcfg: wcfg, dcfg: dcfg, started: time.Now()}
+func newSession(opt options, wcfg window.Config, dcfg detector.Config, mcfg mitigate.Config) (*session, error) {
+	s := &session{opt: opt, wcfg: wcfg, dcfg: dcfg, mcfg: mcfg, started: time.Now()}
 	s.next = s.started.Add(progressInterval)
 
 	var err error
@@ -236,8 +300,13 @@ func newSession(opt options, wcfg window.Config, dcfg detector.Config) (*session
 func (s *session) onClose(c window.Closed) {
 	r := s.ev.Evaluate(c)
 
-	// Sampled after the evaluation, so a window's figures include the
-	// cost of judging it; writing the row falls to the next window.
+	if s.mit != nil {
+		s.block(&r)
+	}
+
+	// Sampled after the evaluation and blocking, so a window's figures
+	// include the cost of judging it; writing the row falls to the next
+	// window.
 	r.Resources = s.resources.Sample()
 
 	if s.drops != nil {
@@ -245,6 +314,10 @@ func (s *session) onClose(c window.Closed) {
 			r.KernelDrops = int64(total - s.lastDrops)
 			s.lastDrops = total
 		}
+	}
+
+	if s.bl != nil {
+		s.countBlocked(&r)
 	}
 
 	if r.Evaluated {
@@ -330,6 +403,10 @@ func (s *session) finish(src capture.Source, finished time.Time) error {
 	s.stats.Window = s.agg.Stats()
 	s.stats.TrackedIPs = uint64(s.ev.Detector().TrackedIPs())
 	s.stats.EvictedIPs = s.ev.Detector().EvictedIPs()
+	if s.mit != nil {
+		st := s.mit.Stats()
+		s.stats.Blocklist = &st
+	}
 	s.stats.WallSeconds = finished.Sub(s.started).Seconds()
 	if s.stats.WallSeconds > 0 {
 		s.stats.PacketsPerSecond = float64(s.stats.Packets) / s.stats.WallSeconds
@@ -347,12 +424,12 @@ func (s *session) runInfo(source, endReason string, finished time.Time) *report.
 		FinishedAt: finished,
 		EndReason:  endReason,
 		Source:     source,
-		Config:     runConfig(s.wcfg, s.dcfg),
+		Config:     runConfig(s.wcfg, s.dcfg, s.mcfg, s.opt.block),
 		Stats:      s.stats,
 	}
 }
 
-func runTrace(opt options, wcfg window.Config, dcfg detector.Config) error {
+func runTrace(opt options, wcfg window.Config, dcfg detector.Config, mcfg mitigate.Config) error {
 	paths, err := capture.ExpandPaths(opt.inputs)
 	if err != nil {
 		return err
@@ -374,7 +451,7 @@ func runTrace(opt options, wcfg window.Config, dcfg detector.Config) error {
 	}
 	defer src.Close()
 
-	s, err := newSession(opt, wcfg, dcfg)
+	s, err := newSession(opt, wcfg, dcfg, mcfg)
 	if err != nil {
 		return err
 	}
@@ -406,21 +483,66 @@ func runTrace(opt options, wcfg window.Config, dcfg detector.Config) error {
 	return errors.Join(loopErr, finishErr)
 }
 
-func runLive(opt options, wcfg window.Config, dcfg detector.Config) error {
+func runLive(opt options, wcfg window.Config, dcfg detector.Config, mcfg mitigate.Config) error {
 	src, err := capture.OpenLive(capture.LiveConfig{Interface: opt.iface, RecvBuffer: opt.rcvbuf})
 	if err != nil {
 		return err
 	}
 	defer src.Close()
 
-	s, err := newSession(opt, wcfg, dcfg)
+	// The blocklist is opened before the output files are created, so a
+	// missing XDP program leaves no half-written results behind.
+	var (
+		bl          blocklistMap
+		mit         *mitigate.Mitigator
+		clock       func() time.Time
+		lastBlocked blocklist.Totals
+		pinned      bool
+
+		// bpfStart is the blocklist maps' memory at start; they are
+		// preallocated, so the reading at the end should agree.
+		bpfStart    uint64
+		bpfStartErr error
+	)
+
+	if opt.block {
+		pinned = true
+
+		if clock, err = taiClock(); err != nil {
+			return err
+		}
+
+		if bl, err = openBlocklist(opt.pinDir); err != nil {
+			return err
+		}
+		defer bl.Close()
+
+		if mit, err = mitigate.New(mcfg, bl); err != nil {
+			return err
+		}
+
+		// Read after the socket is open, so the drops counted per window
+		// cover the same span as the socket's own counters.
+		if lastBlocked, err = bl.Totals(); err != nil {
+			return err
+		}
+
+		_, bpfStart, bpfStartErr = readBPFMemory(bl)
+	} else if pinned, err = clearStaleBlocklist(opt.pinDir); err != nil {
+		return err
+	}
+
+	s, err := newSession(opt, wcfg, dcfg, mcfg)
 	if err != nil {
 		return err
 	}
 
+	s.mit, s.bl, s.clock, s.lastBlocked = mit, bl, clock, lastBlocked
+
 	info := &report.Live{
 		Interface:           opt.iface,
 		RequestedRecvBuffer: opt.rcvbuf,
+		BlocklistPinned:     pinned,
 	}
 	if opt.duration > 0 {
 		info.Duration = opt.duration.String()
@@ -492,6 +614,11 @@ func runLive(opt options, wcfg window.Config, dcfg detector.Config) error {
 	run.Live = info
 	run.Notes = []string{report.LiveTimingNote, report.ResourceNote, report.HostCPUNote, report.SentPacketsNote}
 
+	if bl != nil {
+		run.BPFMemory = bpfMemory(bpfStart, bpfStartErr, bl)
+		run.Notes = append(run.Notes, report.BlocklistNote, report.BPFMemoryNote)
+	}
+
 	if err := report.WriteRun(opt.outDir, run, opt.force); err != nil {
 		return err
 	}
@@ -537,8 +664,8 @@ func flagSet(name string) bool {
 	return set
 }
 
-func runConfig(w window.Config, d detector.Config) report.Config {
-	return report.Config{
+func runConfig(w window.Config, d detector.Config, m mitigate.Config, block bool) report.Config {
+	c := report.Config{
 		WindowLength: w.Length.String(),
 		MaxEmpty:     w.MaxEmpty,
 
@@ -562,7 +689,20 @@ func runConfig(w window.Config, d detector.Config) report.Config {
 
 		IPMode:               d.IQR.IPMode.String(),
 		MaxSharedHistorySize: d.IQR.MaxSharedHistorySize,
+
+		Block: block,
 	}
+
+	if block {
+		c.BlockTTL = m.TTL.String()
+		c.BlockCapacity = m.Capacity
+
+		for _, k := range m.Allow {
+			c.BlockAllow = append(c.BlockAllow, k.String())
+		}
+	}
+
+	return c
 }
 
 func printSummary(r *report.Run) {
@@ -601,6 +741,25 @@ func printSummary(r *report.Run) {
 	log.Printf("  pauses:   %d jumps over %d epochs", s.Window.Jumps, s.Window.SkippedEpochs)
 	log.Printf("  sources:  %d flagged IP rows, %d tracked, %d evicted (ip mode %s)",
 		s.FlaggedIPRows, s.TrackedIPs, s.EvictedIPs, r.Config.IPMode)
+
+	if b := s.Blocklist; b != nil {
+		log.Printf("  blocked:  %d packets dropped by XDP; %d sources blocked, %d refreshed, %d expired, %d evicted, %d active at end (peak %d)",
+			s.BlockedPackets, b.Blocked, b.Refreshed, b.Expired, b.Evicted, b.Active, b.Peak)
+
+		if b.Errors > 0 {
+			log.Printf("warning: %d blocklist operations failed; see the log above", b.Errors)
+		}
+	}
+
+	if m := r.BPFMemory; m != nil {
+		if m.Maps != nil {
+			log.Printf("  maps:     %.1f MiB of BPF map memory in %d maps", float64(m.TotalBytes)/(1<<20), len(m.Maps))
+		}
+
+		for _, w := range m.Warnings {
+			log.Printf("warning: BPF map memory: %s", w)
+		}
+	}
 
 	if s.Window.Late > 0 {
 		log.Printf("warning: %d out-of-order packets were dropped; the input is not in time order", s.Window.Late)
