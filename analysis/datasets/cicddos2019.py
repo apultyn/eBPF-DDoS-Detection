@@ -143,7 +143,9 @@ def _parse_chunk(raw: pd.DataFrame, offset_ns: int) -> tuple[pd.DataFrame, Count
         "src_ip": df.loc[ok, "src_ip"],
         "dst_ip": df.loc[ok, "dst_ip"],
         "label": df.loc[ok, "label"],
-        "local_ns": ts[ok].astype("int64"),
+        # pandas 3 parses to microsecond resolution; force nanoseconds so
+        # the integers are ns on every pandas version.
+        "local_ns": ts[ok].dt.as_unit("ns").astype("int64"),
     })
 
     for c in NUMERIC:
