@@ -5,10 +5,16 @@ accuracy, precision, recall and F1 per window, and detection latency per
 attack. Ground truth follows Koshovyi & Wu (2026), section 4.1.3, so the
 results are comparable with their IQR baseline.
 
+For a step-by-step guide, from the dataset to accuracy, recall
+and per-attack results, see [GUIDE.md](GUIDE.md).
+
 ```
+python3 -m venv .venv && source .venv/bin/activate
 pip install -r analysis/requirements.txt
 python -m pytest analysis
 ```
+
+Works with pandas 2 and 3.
 
 ## 1. Labels to the common format
 
