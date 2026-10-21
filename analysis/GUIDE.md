@@ -20,6 +20,16 @@ CIC-DDoS2019 pcap ──► detector -pcap ──► results/03-11/ ────
 Everything is done **per day**. CIC-DDoS2019 has two days: **03-11** (the
 first day, the testing day) and **01-12** (the second day, the training day).
 
+There are two ways to get the detector's flags:
+
+| | Way | Use it for |
+|---|---|---|
+| **A** | the user-space detector reads the pcap files directly (`-pcap`), steps 2–4 | the algorithm's accuracy over whole days, calibration |
+| **B** | an excerpt is replayed with tcpreplay to a live detector, user space or kernel, step 5 | accuracy of both variants under live conditions, side by side |
+
+Way B builds on way A: it needs the labels from step 2 and a `-pcap` run of
+the excerpt as reference.
+
 ---
 
 ## Step 1: set up your machine (once)
@@ -86,9 +96,8 @@ Write the offset down per day and use the same one in every run.
 go run ./userspace/cmd/detector -pcap PCAP-03-11/ -out results/03-11
 ```
 
-The detector **must** be run on the pcap files (`-pcap`), not live on a
-network interface. The ground truth uses the pcap files' own time, and a
-live run has a different clock. `evaluate` refuses live runs.
+Here the detector reads the pcap files itself (way A). For live runs, see
+step 5.
 
 To try other settings, for example a different threshold, add flags and use
 a new `-out` directory per attempt:
@@ -129,6 +138,78 @@ all      window          ...
 
 ---
 
+## Step 5: live runs, user space and kernel (way B)
+
+How to make the excerpt and do the live runs on the Raspberry Pi or FABRIC
+is described in [docs/live-evaluation.md](../docs/live-evaluation.md). This
+step is about evaluating them. You need:
+
+- the labels of the day, from step 2: `labels/03-11.parquet`;
+- the excerpt's description, from `scripts/excerpt.py`: `excerpts/03-11-1300.excerpt.json`;
+- a **reference run**: the user-space detector run with `-pcap` on the excerpt file;
+- one or more **live runs** of the same excerpt, each in its own directory
+  with the sender's `tcpreplay.txt` copied into it.
+
+Why the extra pieces: a live run stamps its windows with the time the
+packets arrived (2026), while the labels use the time in the trace (2018).
+`evaluate` finds the offset between the two by matching the live run's
+packets per window against the reference run, then moves the live windows
+to trace time. The excerpt description tells it where the replay started
+and ended, so that windows before and after it are left out instead of
+counting as correctly judged normal windows.
+
+Evaluate the reference and each live run on its own:
+
+```bash
+E=excerpts/03-11-1300.excerpt.json
+R=results/03-11-1300
+
+python -m analysis.evaluate --labels labels/03-11.parquet --run $R/ref \
+    --excerpt $E --out eval/03-11-1300/ref
+
+python -m analysis.evaluate --labels labels/03-11.parquet --run $R/us-live \
+    --excerpt $E --reference $R/ref --out eval/03-11-1300/us-live
+
+python -m analysis.evaluate --labels labels/03-11.parquet --run $R/kernel-live \
+    --excerpt $E --reference $R/ref --out eval/03-11-1300/kernel-live
+```
+
+Then put them side by side:
+
+```bash
+python -m analysis.compare eval/03-11-1300/ref eval/03-11-1300/us-live eval/03-11-1300/kernel-live \
+    --names "user space pcap,user space live,kernel live" --out eval/03-11-1300/compare
+```
+
+### What a live evaluation prints
+
+Before the usual table, each run gets a short description:
+
+```
+labels: kernel (xdp), window 536.871 ms, combined
+  offset 252288123.458 s by cross-correlation, correlation 0.9951, peak ratio 1.72
+  windows: 1166 total, 0 before and 57 after the excerpt, 1 not evaluated, 75 warm-up, 1033 scored (11.0% attack)
+  packets: sent tcpreplay 2067442, tcpreplay failed 0, detector packets 1988917, ..., window loss 3.09%
+```
+
+| Line | What to check |
+|---|---|
+| first line | the **variant** (`userspace` or `kernel`), how it ran (`pcap`, `live` or `xdp`) and its window length |
+| `offset` | the offset found and how good the match was. **Correlation** should be above 0.9, and the **peak ratio** (how far the best offset stands out from the next) above 1.2; otherwise a warning is printed and the results should not be used |
+| `windows` | how many windows were left out and why: before or after the excerpt, not evaluated, warm-up. The rest are scored. `attack` is the share of scored windows that overlap an attack |
+| `packets` | the losses along the way: sent by tcpreplay, received by the interface and socket, counted by the detector, and **window loss**, the share of the excerpt's packets that did not reach the detector in the scored part. Above 1 % gives a warning, since the detector then saw less than what was sent |
+
+### What `compare` prints
+
+One column per run, with the variant, window length, offset and its
+correlation, the number of scored windows, TP/FP/TN/FN, accuracy, precision,
+recall, F1, FPR, attacks detected, window loss and the number of warnings;
+then detection latency per attack, one column per run. It warns if the runs
+have different window lengths or excerpts, since their numbers are then not
+like for like, and repeats each run's own warnings.
+
+---
+
 ## Reading the results
 
 ### The main numbers: `metrics.csv`
@@ -139,9 +220,13 @@ In `eval/<day>/metrics.csv`, and with two days also a combined
 | Column | Meaning |
 |---|---|
 | `prediction` | `window` = the window was flagged by the window threshold. **This is the main result.** `window_or_ip` = the window also counts as flagged if any IP address in it was flagged. |
+| `variant`, `source` | (single runs) `userspace` or `kernel`, and `pcap`, `live` or `xdp` |
 | `windows_scored` | number of windows counted |
-| `excluded_warmup` | windows left out as warm-up (the first 75 per day) |
+| `excluded_before_excerpt`, `excluded_after_excerpt` | (with `--excerpt`) windows that lie partly or wholly outside the excerpt |
+| `excluded_warmup` | windows left out as warm-up (the first 75 per day, or from the excerpt's start) |
 | `excluded_not_evaluated` | windows the detector itself did not judge |
+| `attack_window_share` | share of the scored windows that overlap an attack |
+| `offset_ns` | (live runs) the offset used, wall clock minus trace time |
 | `TP` | attack windows that were flagged (correct) |
 | `FP` | normal windows that were flagged (false alarm) |
 | `TN` | normal windows that were not flagged (correct) |
@@ -150,10 +235,15 @@ In `eval/<day>/metrics.csv`, and with two days also a combined
 | `precision` | TP / (TP + FP): how often an alarm was a real attack |
 | `recall` | TP / (TP + FN): share of attack windows that were detected |
 | `f1` | a combination of precision and recall |
+| `fpr` | FP / (FP + TN): share of normal windows that raised a false alarm |
 | `attacks_detected` / `attacks_total` | attack types flagged at least once |
 
 An empty value means the metric cannot be computed, for example precision
 when no window was flagged. It is never a made-up number.
+
+For a single run, `metrics.json` also has a `run` section with the variant,
+the offset and how it was found, the excerpt, the parsed `tcpreplay.txt` and
+the packet losses.
 
 ### How the ground truth works
 
@@ -183,7 +273,10 @@ One row per window. Useful for understanding *why* something went wrong.
 
 | Column | Meaning |
 |---|---|
-| `excluded` | `warmup` or `not_evaluated` if the window was not counted, otherwise empty |
+| `start_ns`, `end_ns` | the window in trace time (for live runs, after the offset) |
+| `wall_start_ns` | the window's start as the detector stamped it; differs from `start_ns` by the offset for live runs |
+| `packets` | packets the detector counted in the window |
+| `excluded` | `before_excerpt`, `after_excerpt`, `not_evaluated` or `warmup` if the window was not counted, otherwise empty |
 | `truth` | `True` if the window overlaps an attack according to the ground truth |
 | `malicious` | `True` if the detector flagged the window |
 | `outcome_window` | `TP`, `FP`, `TN` or `FN` |
@@ -231,7 +324,12 @@ Each run's settings are in `results/<run>/run.json` under `config`.
 | `expected one argument` after `--time-offset -3h` | write `--time-offset=-3h` |
 | `WARNING: labels (...) do not overlap the scored windows` | wrong `--time-offset`, or ground truth and run from different days |
 | `WARNING: no scored window overlaps an attack interval` | as above, or all attacks fall in the warm-up |
-| `source is 'live'` | the detector ran live; run it again with `-pcap` |
+| `source is 'live'` / `'xdp'`, a live run | it was given with `--day`; evaluate it on its own with `--run`, `--excerpt` and `--reference` (step 5) |
+| `a live run needs --excerpt` / `needs --reference` | give the excerpt's `.excerpt.json` and the `-pcap` reference run of the same excerpt |
+| `blocking was on` | the run had `-block`; evaluation runs must not block. Rerun without it |
+| `WARNING: correlation … is below 0.9` / `the alignment is ambiguous` | the offset is unreliable: check that the run and the reference replayed the same excerpt, and the losses |
+| `WARNING: … did not reach the detector` | more than 1 % of the packets were lost on the way; the detector saw less than was sent |
+| `WARNING: the replay took … times the excerpt's duration` | tcpreplay could not keep up with the original rate |
 | `already exists` / `is not empty` | choose a new `--out`, or add `--force` to overwrite |
 | Almost all rows skipped as `bad_timestamp` | the CSVs use an unexpected time format; tell the group, the loader needs changing |
 | `WARNING: ... 12-hour clock without AM/PM` | the CSVs seem to lack afternoon times; check the time format before going on |

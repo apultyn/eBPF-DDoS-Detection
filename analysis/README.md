@@ -54,6 +54,25 @@ days under `eval/`. The window length and mode are read from each run's
 `run.json`. The first 75 evaluated windows per day are excluded as warm-up
 (`--warmup`).
 
+## 3. Live runs and comparing variants
+
+Live runs (user space with `-iface`, and the kernel variant) are evaluated
+one at a time against an excerpt made by `scripts/excerpt.py`, with a -pcap
+run of the same excerpt as reference for aligning clocks:
+
+```
+python -m analysis.evaluate --labels labels/03-11.parquet --run results/kernel-live/ \
+    --excerpt excerpts/03-11.excerpt.json --reference results/ref/ --out eval/kernel-live/
+python -m analysis.compare eval/ref eval/us-live eval/kernel-live
+```
+
+A live evaluation also reports the offset and how well it matched, the
+windows left out before and after the excerpt, and the packet losses from
+tcpreplay to the detector; all metrics include FPR. Step 5 of
+[GUIDE.md](GUIDE.md) explains the output. The full procedure, from making
+the excerpt to the live runs on the Pi and FABRIC, is in
+[docs/live-evaluation.md](../docs/live-evaluation.md).
+
 ## Layout
 
 | Module | Depends on |
@@ -62,6 +81,9 @@ days under `eval/`. The window length and mode are read from each run's
 | `schema.py` | defines and validates the common label format |
 | `groundtruth.py` | the common format only |
 | `evaluate.py` | the common format and the detector's `windows.csv`/`run.json` |
+| `alignment.py` | packets per window only; finds a live run's offset to trace time |
+| `tcpreplay.py` | parses the sender's `tcpreplay.txt` |
+| `compare.py` | the outputs of `evaluate.py` |
 
 To add a dataset, add a loader under `datasets/` and register it in
 `datasets/__init__.py`. Nothing after the loader needs to change.
