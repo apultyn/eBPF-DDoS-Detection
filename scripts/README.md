@@ -1,5 +1,14 @@
 # scripts
 
+| Script | Purpose |
+|---|---|
+| `excerpt.py` | cut an excerpt out of a day of CIC-DDoS2019 pcaps for live replay, refusing gaps between files and early attacks; writes `<name>.excerpt.json` |
+| `run-detector.sh` | run one live evaluation run of either variant on the detector machine, under memwatch, never with blocking |
+| `memwatch.py` | run a command in its own cgroup and log its memory (below) |
+
+How `excerpt.py` and `run-detector.sh` are used together is described in
+[docs/live-evaluation.md](../docs/live-evaluation.md).
+
 ## memwatch.py — memory of a run, measured through cgroup v2
 
 `memwatch.py` starts a command in a cgroup of its own and logs that cgroup's

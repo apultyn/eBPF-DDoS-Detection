@@ -86,6 +86,7 @@ def test_metrics_after_warmup_and_unevaluated_exclusions(tmp_path):
     assert s["precision"] == pytest.approx(1 / 3)
     assert s["recall"] == pytest.approx(1 / 3)
     assert s["f1"] == pytest.approx(1 / 3)
+    assert s["fpr"] == pytest.approx(2 / 4)
 
 
 def test_current_mode_span_is_one_window(tmp_path):
@@ -147,9 +148,12 @@ def test_latency_detected_missed_and_not_covered(tmp_path):
     assert (s["attacks_total"], s["attacks_detected"], s["attacks_not_covered"]) == (3, 1, 1)
 
 
-def test_live_runs_are_refused(tmp_path):
-    with pytest.raises(evaluate.RunError, match="trace"):
+def test_live_runs_need_the_single_run_path(tmp_path):
+    with pytest.raises(evaluate.RunError, match="wall clock"):
         evaluate.load_run(write_run(tmp_path / "r", [False], source="live"))
+
+    # Allowed when evaluated on its own, with an offset.
+    assert evaluate.load_run(tmp_path / "r", allow_live=True).variant == "userspace"
 
 
 def test_window_length_must_match_run_json(tmp_path):
