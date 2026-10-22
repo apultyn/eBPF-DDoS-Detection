@@ -58,7 +58,7 @@
 #define MASK (WIDTH - 1)
 #define TOTAL_BUCKETS (DEPTH * WIDTH)
 #define DECAY_THRESHOLD 64
-#define K_SIZE 32
+#define K_SIZE 10
 
 // ¤ Blocklist Parameters
 #define BLOCKLIST_SIZE 1000 // Max number of blocked IP addresses
