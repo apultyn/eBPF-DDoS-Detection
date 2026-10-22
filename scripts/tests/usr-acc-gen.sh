@@ -53,7 +53,7 @@ ip link show
 # ./detector-userspace -pcap /mnt/attack_data/DAT300-data/CICDDoS2019/excerpts/01-12.pcap -window 536.870912ms -out results/ref-pcap/
 # 7. Run the online test test (on the victim)
 
-sudo ./detector-userspace -iface enp7s0 -window 536.870912ms -duration 44m30s --out "$out"
+sudo ./detector-userspace -pin-dir /sys/fs/bpf/xdp/globals -iface enp7s0 -window 536.870912ms -duration 44m30s --out "$out"
 # # 8. Evaluate live run
 # python3 -m analysis.evaluate --labels /mnt/attack_data/DAT300-data/CICDDoS2019/CSV/labels.csv --run "$out/" --excerpt /mnt/attack_data/DAT300-data/CICDDoS2019/excerpts/01-12.excerpt.json --reference results/ref-pcap/ --out "results/eval-usr-acc-gen-$1"
 # XDP and its pinned maps are released by the EXIT trap above.

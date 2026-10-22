@@ -45,5 +45,5 @@ attached=1
 # 3. Double check the attach
 ip link show
 # 4. Run the test
-sudo python3 scripts/memwatch.py --cpu --out "$out" -- ./detector-userspace -pin-dir /sys/fs/bpf -iface enp7s0 -window 536.870912ms -duration 44m30s --out "$out" -block
+sudo python3 scripts/memwatch.py --cpu --out "$out" -- ./detector-userspace -pin-dir /sys/fs/bpf/xdp/globals -iface enp7s0 -window 536.870912ms -duration 44m30s --out "$out" -block
 # XDP and its pinned maps are released by the EXIT trap above.

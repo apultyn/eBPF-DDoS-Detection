@@ -44,7 +44,7 @@ attached=1
 # 3. Double check the attach
 ip link show
 # 4. Run the test
-sudo ./detector-xdp -pin-dir /sys/fs/bpf -iface enp7s0 -duration 44m30s -out "$out"
+sudo ./detector-xdp -pin-dir /sys/fs/bpf/xdp/globals -iface enp7s0 -duration 44m30s -out "$out"
 # # 5. Evaluate live run (you don't have to get new reference)
 # python3 -m analysis.evaluate --labels /mnt/attack_data/DAT300-data/CICDDoS2019/CSV/labels.csv --run "$out/" --excerpt /mnt/attack_data/DAT300-data/CICDDoS2019/excerpts/01-12.excerpt.json --reference results/ref-pcap/ --out "results/eval-ker-acc-nat-$1"
 # XDP and its pinned maps are released by the EXIT trap above.
