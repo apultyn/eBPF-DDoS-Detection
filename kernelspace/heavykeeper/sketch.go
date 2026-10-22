@@ -21,7 +21,7 @@ const (
 	Depth        = 4    // DEPTH
 	Width        = 1024 // WIDTH
 	TotalBuckets = Depth * Width
-	K            = 32 // K_SIZE, entries in each topk_map_N
+	K            = 10 // K_SIZE, entries in each topk_map_N
 	Slots        = 4  // SLOTS, number of sketch_N and topk_map_N maps
 
 	BlocklistSize = 1000 // BLOCKLIST_SIZE, max_entries of blocklist_map
