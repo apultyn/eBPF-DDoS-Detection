@@ -6,6 +6,8 @@ node_modules/
 # Python
 __pycache__/
 .pytest_cache/
+*.venv/
+.test-deps
 
 # Data and results: never committed
 /labels/

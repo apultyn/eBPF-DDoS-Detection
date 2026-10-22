@@ -49,13 +49,19 @@ PCAP_LIB = '''
 import struct, sys
 from datetime import datetime, timezone
 def read(path):
-    b = open(path, "rb").read()
+    b = sys.stdin.buffer.read() if path == "-" else open(path, "rb").read()
     hdr, pos, recs = b[:24], 24, []
     while pos < len(b):
         sec, usec, cap, wire = struct.unpack("<IIII", b[pos:pos+16])
         recs.append((sec * 10**9 + usec * 1000, b[pos:pos+16+cap]))
         pos += 16 + cap
     return hdr, recs
+
+def write(path, data):
+    if path == "-":
+        sys.stdout.buffer.write(data)
+    else:
+        open(path, "wb").write(data)
 def iso(t):
     d, f = t.rstrip("Z").split(".")
     dt = datetime.strptime(d, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
@@ -93,7 +99,7 @@ def tools(tmp_path, capturecheck_bin):
             h, recs = read(f)
             hdr = hdr or h
             data += b"".join(r for _, r in recs)
-        open(out, "wb").write(hdr + data)
+        write(out, hdr + data)
     """)
     editcap = make_exe(b / "editcap", """
         args = sys.argv[1:]
@@ -102,11 +108,12 @@ def tools(tmp_path, capturecheck_bin):
         a, z = iso(args[args.index("-A") + 1]), iso(args[args.index("-B") + 1])
         src, dst = args[-2], args[-1]
         hdr, recs = read(src)
-        open(dst, "wb").write(hdr + b"".join(r for t, r in recs if a <= t < z))
+        write(dst, hdr + b"".join(r for t, r in recs if a <= t < z))
     """)
     tcprewrite = make_exe(b / "tcprewrite", """
         args = dict(a.split("=", 1) for a in sys.argv[1:] if "=" in a)
-        open(args["--outfile"], "wb").write(open(args["--infile"], "rb").read())
+        hdr, recs = read(args["--infile"])
+        write(args["--outfile"], hdr + b"".join(r for _, r in recs))
     """)
 
     return excerpt.Tools(capturecheck=[capturecheck_bin], mergecap=mergecap, editcap=editcap,
@@ -189,6 +196,9 @@ def test_excerpt_within_close_files(tmp_path, tools):
     # The commands are recorded, with mergecap concatenating in order.
     merge = next(c for c in meta["commands"] if c[0].endswith("mergecap"))
     assert "-a" in merge and merge[-2].endswith("_0") and merge[-1].endswith("_1")
+    assert merge[merge.index("-w") + 1] == "-"
+    edit = next(c for c in meta["commands"] if c[0].endswith("editcap"))
+    assert edit[-2] == "-"
 
 
 def test_default_start_is_first_packet_of_day(tmp_path, tools):
@@ -242,6 +252,7 @@ def test_non_ethernet_needs_rewrite(tmp_path, tools):
     assert rc == 0 and meta["link_type_input"] == 101
     rewrite = next(c for c in meta["commands"] if c[0].endswith("tcprewrite"))
     assert "--dlt=enet" in rewrite and "--enet-dmac=02:00:00:00:00:02" in rewrite
+    assert "--infile=-" in rewrite
 
 
 def test_refuses_attack_in_first_minutes(tmp_path, tools):

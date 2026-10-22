@@ -65,7 +65,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from . import alignment, groundtruth, schema, tcpreplay
+from . import alignment, groundtruth, tcpreplay
 from .timefmt import format_ns, parse_duration
 
 DEFAULT_WARMUP = 75
@@ -82,6 +82,38 @@ LIVE_SOURCES = ("live", "xdp")
 # Losses above this fraction are warned about: they change what the
 # detector sees, and with it the detection results.
 LOSS_WARNING = 0.01
+MAX_METADATA_BYTES = 8 * 1024 * 1024
+
+
+def read_metadata(path: Path, description: str) -> dict:
+    """Read small JSON metadata without ever loading a PCAP into memory."""
+    try:
+        with path.open("rb") as source:
+            if path.stat().st_size > MAX_METADATA_BYTES:
+                raise RunError(f"{description}: {path} is too large for JSON metadata; give the JSON file, not a PCAP")
+            raw = source.read(MAX_METADATA_BYTES + 1)
+        if len(raw) > MAX_METADATA_BYTES:
+            raise RunError(f"{description}: {path} exceeds the metadata size limit")
+        result = json.loads(raw)
+    except (OSError, ValueError, UnicodeError) as e:
+        raise RunError(f"{description}: cannot read JSON metadata from {path}: {e}") from e
+    if not isinstance(result, dict):
+        raise RunError(f"{description}: {path} must contain a JSON object")
+    return result
+
+
+def read_excerpt(path: Path) -> dict:
+    excerpt = read_metadata(path, "--excerpt (expected .excerpt.json)")
+    for name in ("trace_start_ns", "trace_end_ns"):
+        if type(excerpt.get(name)) is not int:
+            raise RunError(f"--excerpt: {path} needs an integer {name}")
+    if excerpt["trace_end_ns"] < excerpt["trace_start_ns"]:
+        raise RunError(f"--excerpt: {path} ends before it starts")
+    return excerpt
+
+
+def progress(message: str) -> None:
+    print(f"evaluate: {message}", file=sys.stderr, flush=True)
 
 
 @dataclass
@@ -111,7 +143,12 @@ def load_run(run_dir: Path, allow_live: bool = False) -> Run:
     packets never reach the detector, so it stops seeing an attack it has
     acted on, and the window metrics would no longer measure detection.
     """
-    info = json.loads((run_dir / "run.json").read_text())
+    if not run_dir.is_dir():
+        raise RunError(f"{run_dir}: expected a detector results directory containing run.json and windows.csv, not a PCAP")
+    for name in ("run.json", "windows.csv"):
+        if not (run_dir / name).is_file():
+            raise RunError(f"{run_dir}: missing {name}; give a completed detector results directory")
+    info = read_metadata(run_dir / "run.json", "detector run")
 
     source = info.get("source", "")
     if source != "pcap" and source not in LIVE_SOURCES:
@@ -553,7 +590,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--run", type=Path, help="detector result directory, for a single day")
     p.add_argument("--excerpt", type=Path, help="excerpt.json from scripts/excerpt.py; required for live runs")
     p.add_argument("--reference", type=Path,
-                   help="a -pcap run of the same excerpt, to find a live run's offset to trace time")
+                   help="results directory (run.json and windows.csv) from a -pcap run of the same excerpt")
     p.add_argument("--offset-ns", type=int, help="the offset (wall - trace) in ns, instead of --reference")
     p.add_argument("--out", required=True, type=Path)
     p.add_argument("--warmup", type=int, default=DEFAULT_WARMUP,
@@ -581,42 +618,54 @@ def main(argv: list[str] | None = None) -> int:
     if not single and (args.excerpt or args.reference or args.offset_ns is not None):
         p.error("--excerpt, --reference and --offset-ns apply to a single run (--labels and --run)")
 
+    try:
+        excerpt = read_excerpt(args.excerpt) if args.excerpt else None
+    except RunError as e:
+        p.error(str(e))
+
     days = []
     for name, labels_path, run_dir in specs:
+        progress(f"reading detector windows from {run_dir}")
         try:
             run = load_run(run_dir, allow_live=single)
         except RunError as e:
             p.error(str(e))
 
-        labels = schema.read(labels_path)
-
-        if not single:
-            days.append(evaluate_day(name, labels, run, args.warmup))
-            continue
-
-        excerpt = json.loads(args.excerpt.read_text()) if args.excerpt else None
         offset, align, reference = 0, None, None
 
-        if run.live:
+        if single and run.live:
             if excerpt is None:
                 p.error("a live run needs --excerpt, so that windows before and after the replay are left out")
             if args.offset_ns is not None:
                 offset = args.offset_ns
             elif args.reference:
+                progress(f"reading reference windows from {args.reference}")
                 try:
                     reference = load_run(args.reference)
                 except RunError as e:
                     p.error(f"reference: {e}")
-                align = alignment.estimate_offset(series(reference), series(run))
+                progress("aligning live and reference windows (bounded coarse grid)")
+                try:
+                    align = alignment.estimate_offset(series(reference), series(run))
+                except ValueError as e:
+                    p.error(f"alignment: {e}")
                 offset = align.offset_ns
             else:
                 p.error("a live run needs --reference (a -pcap run of the same excerpt) or --offset-ns")
 
+        progress(f"reading and merging labels in batches from {labels_path}")
+        try:
+            labels = groundtruth.read_labels(labels_path)
+        except (OSError, ValueError) as e:
+            p.error(f"labels: {labels_path}: expected preprocessed label Parquet in the common schema: {e}")
+        progress(f"scoring {len(run.windows)} windows against {int(labels['is_attack'].sum())} merged attack intervals")
         day = evaluate_day(name, labels, run, args.warmup, offset_ns=offset, excerpt=excerpt)
-        day["run"] = describe_run(run, offset, align, excerpt, reference)
-        day["warnings"] = day["run"]["warnings"] + day["warnings"]
+        if single:
+            day["run"] = describe_run(run, offset, align, excerpt, reference)
+            day["warnings"] = day["run"]["warnings"] + day["warnings"]
         days.append(day)
 
+    progress(f"writing evaluation to {args.out}")
     summary = write_outputs(args.out, days)
     print_summary(days, summary)
 

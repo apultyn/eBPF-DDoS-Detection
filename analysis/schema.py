@@ -77,16 +77,19 @@ def to_table(df: pd.DataFrame) -> pa.Table:
     return pa.Table.from_arrays(arrays, schema=SCHEMA)
 
 
-def validate(table: pa.Table) -> None:
-    """Raise SchemaError unless table follows the common label format."""
-    if table.schema.names != COLUMNS:
-        raise SchemaError(f"columns are {table.schema.names}, want {COLUMNS}")
+def validate_schema(actual: pa.Schema) -> None:
+    """Check the common format without reading any rows."""
+    if actual.names != COLUMNS:
+        raise SchemaError(f"columns are {actual.names}, want {COLUMNS}")
 
     for field in SCHEMA:
-        got = table.schema.field(field.name).type
+        got = actual.field(field.name).type
         if not got.equals(field.type):
             raise SchemaError(f"column {field.name} has type {got}, want {field.type}")
 
+
+def validate_intervals(table: pa.Table | pa.RecordBatch) -> None:
+    """Validate required values, including on a projected interval batch."""
     for name in REQUIRED:
         nulls = table.column(name).null_count
         if nulls:
@@ -94,6 +97,26 @@ def validate(table: pa.Table) -> None:
 
     if table.num_rows and pc.any(pc.less(table.column("end_ns"), table.column("start_ns"))).as_py():
         raise SchemaError("some rows end before they start")
+
+
+def validate(table: pa.Table) -> None:
+    """Raise SchemaError unless table follows the common label format."""
+    validate_schema(table.schema)
+    validate_intervals(table)
+
+
+def iter_intervals(path: str | Path, batch_size: int = 65536):
+    """Stream only the columns needed to evaluate interval ground truth.
+
+    Check the full schema from metadata, but never decode optional per-flow
+    fields such as IP addresses. Single-threaded reading avoids parallel
+    column decode buffers on small evaluation machines.
+    """
+    with pq.ParquetFile(path, pre_buffer=False) as source:
+        validate_schema(source.schema_arrow)
+        for batch in source.iter_batches(batch_size=batch_size, columns=list(REQUIRED), use_threads=False):
+            validate_intervals(batch)
+            yield batch
 
 
 def write(table: pa.Table, path: str | Path) -> None:
