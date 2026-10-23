@@ -1,4 +1,5 @@
 pandas>=2.0
 pyarrow>=14
 numpy>=1.24
+matplotlib>=3.7
 pytest>=7

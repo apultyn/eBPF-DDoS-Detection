@@ -2,6 +2,7 @@
 node_modules/
 .npm-cache/
 .husky/_/
+tmp/
 
 # Python
 __pycache__/

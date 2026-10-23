@@ -73,6 +73,31 @@ tcpreplay to the detector; all metrics include FPR. Step 5 of
 the excerpt to the live runs on the Pi and FABRIC, is in
 [docs/live-evaluation.md](../docs/live-evaluation.md).
 
+## 4. Plot individual runs
+
+```sh
+python -m analysis.plot results/ --out results/plots --format png pdf
+```
+
+Creates traffic plots for each run, separate CPU and memory plots for
+blocking performance runs, and actual/predicted label timelines from existing
+accuracy evaluations. Supports a single directory or an entire results tree.
+See [PLOTTING.md](PLOTTING.md) for options, output files and counter definitions.
+Plots preserve missing measurements, scoring exclusions and evaluation warnings.
+
+## 5. Compare performance as JSON
+
+```sh
+python -m analysis.compare_performance results/ --out results/comparison.json
+```
+
+Summarizes CPU, cgroup memory plus separately charged BPF maps, and window
+evaluation/decision/block-update timing. Includes per-run percentiles,
+descriptive implementation comparisons and source warnings. Use `--blocking on`
+for the mitigation performance runs. No additional dependencies are needed.
+See [PERFORMANCE.md](PERFORMANCE.md) for definitions, current findings and how
+to measure attack-onset, application and per-packet latency.
+
 ## Layout
 
 | Module | Depends on |
@@ -84,6 +109,8 @@ the excerpt to the live runs on the Pi and FABRIC, is in
 | `alignment.py` | packets per window only; finds a live run's offset to trace time |
 | `tcpreplay.py` | parses the sender's `tcpreplay.txt` |
 | `compare.py` | the outputs of `evaluate.py` |
+| `compare_performance.py` | raw run windows/resources; standard library JSON comparison |
+| `plot.py` | raw run windows/resources and existing single-run evaluation outputs |
 
 To add a dataset, add a loader under `datasets/` and register it in
 `datasets/__init__.py`. Nothing after the loader needs to change.
