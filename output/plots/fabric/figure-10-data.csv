@@ -1,0 +1,3 @@
+implementation,run,sample_count,phase_start_elapsed_s,phase_end_elapsed_s,measured_interval_seconds,detector_process_cores,rest_of_host_cores,host_busy_cores,phase_observed_accounted_pps
+Userspace,usr-acc-gen-1,1285,870.0,1560.0,689.8791042,0.5615467589052975,0.13273430727574717,0.6942810661810447,103685.73357928936
+Kernel,ker-acc-gen-1,1285,870.0,1560.0,689.878617595,0.004326282803784686,0.27839011835086036,0.2827164011546451,103238.39322385195

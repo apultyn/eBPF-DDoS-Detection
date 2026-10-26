@@ -1,0 +1,41 @@
+% Optional FABRIC figure fragment; requires graphicx and float.
+% Copy the fabric/ folder into resources/testing-figures/ first.
+% Figure numbers are assigned by the surrounding report.
+% Figure 8's excerpt profile is shared by both testbeds; retain the existing
+% workload figure rather than inserting another copy here.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{resources/testing-figures/fabric/figure-09-packet-accounting.png}
+  \caption{Packet accounting on the FABRIC VM with blocking disabled, over
+  one whole recording per implementation. Shares use the explicit interface
+  counter estimate $\Delta\mathrm{rx\_packets}+\Delta\mathrm{rx\_drop}$.
+  Matching interface-drop counters are counted once. Right: magnified
+  non-counted components; socket and userspace late rejection are inapplicable
+  to the kernel path.}
+  \label{fig:fabric-packet-accounting}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{resources/testing-figures/fabric/figure-10-cpu-breakdown.png}
+  \caption{Where CPU time is spent during the flood on the FABRIC VM, with
+  blocking disabled. Both local high-rate intervals are 870--1560~s, selected
+  from traffic independently of CPU. Values are mean CPU use in cores. The
+  rest of host is whole-host busy time minus detector-process CPU time,
+  including unrelated host activity. XDP per-packet work is outside the
+  kernel detector process. Each bar uses one accuracy recording.}
+  \label{fig:fabric-cpu-breakdown}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=\linewidth]{resources/testing-figures/fabric/figure-11-window-classification.png}
+  \caption{Provisional window classification over time on the FABRIC VM,
+  blocking disabled. The strips show corrected-label ground truth and saved
+  userspace/kernel outcomes on their native trace-time grids. Grey denotes
+  excluded intervals or no aligned windows. Combined-mode truth spans the
+  current and previous 536.870912~ms window. Both saved alignments have
+  correlation and peak-ambiguity warnings.}
+  \label{fig:fabric-window-classification}
+\end{figure}

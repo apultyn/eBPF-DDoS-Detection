@@ -78,9 +78,10 @@ definition: window malicious **or** at least one flagged IP. Default is
 unevaluated or unavailable rows, so warm-up and out-of-excerpt windows cannot
 look like correctly predicted benign observations. Ground truth follows the
 effective span already used by the evaluator, including combined windows.
-Warnings are printed on the figure, marked provisional and retained in the
-manifest. These figures visualize the existing evaluation; they do not repair
-its clock alignment or validate its labels.
+Figures omit footer notes and warnings. Evaluations with warnings retain a
+provisional title, and the warning details remain in the manifest. These
+figures visualize the existing evaluation; they do not repair its clock
+alignment or validate its labels.
 
 ## Interpret the counters correctly
 
@@ -111,9 +112,12 @@ its clock alignment or validate its labels.
   future experiments, verify map charge ownership before reusing that total.
   `current` includes file cache and is a different measurement; heap is only
   the Go heap. None of these is total machine RAM utilization.
-- Shading in traffic/resource plots is the detector's raw window verdict,
-  including any startup period. Accuracy plots instead respect the
-  evaluator's explicit exclusions. The offline reference uses trace elapsed
+- Shading in traffic/resource plots marks raw `malicious=true` windows,
+  including any startup period. It does not mark blocked packets or
+  `flagged_ips` alone. Sparse, short flagged windows can appear as faint thin
+  lines when the full run is shown; use `--xlim` to inspect them. Accuracy
+  plots instead respect the evaluator's explicit exclusions. The offline
+  reference uses trace elapsed
   time; live raw plots use wall elapsed time. No automatic cross-run alignment
   or averaging is performed here.
 

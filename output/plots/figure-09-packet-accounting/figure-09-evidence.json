@@ -1,0 +1,144 @@
+{
+  "figure": 9,
+  "status": "Provisional driver-counter accounting, not validated physical-interface arrival shares.",
+  "denominator": "delta /proc/net/dev rx_packets + delta /proc/net/dev rx_drop",
+  "unaccounted_formula": "denominator - counted_in_windows - interface_drops - socket_drops - late_drops",
+  "counter_reference": "https://www.kernel.org/doc/html/latest/networking/statistics.html",
+  "limitations": [
+    "Linux rx_packets may include packets dropped during host processing, and procfs combines dropped and missed counters. A physical-arrival sum requires driver-specific disjointness verification.",
+    "The hardware rx_good_pkts/rx_pkts totals are smaller than the driver receive-plus-drop sum; using hardware totals with the requested components produces negative residuals.",
+    "Bars are normalized only to the explicitly defined driver-counter sum. No hardware residual is clipped, and components are not renormalized to hardware totals.",
+    "Do not add dev.rx_errs or ethtool.rx_errors: they overlap the reported driver drops in these recordings.",
+    "The userspace residual is 389 parser-skipped frames, so unaccounted does not mean unexplained loss. Kernel residual is 630 packets, including possible non-IP/background, startup/partial-window or other counter differences.",
+    "Kernel socket and userspace late-rejection stages are structurally inapplicable, not measured zero-loss equivalents. Other window discards remain unclassified in the residual.",
+    "Whole-recording network counters cannot be restricted to a high-rate phase without interval snapshots. This chart uses whole recordings.",
+    "All builds record modified source trees; these single-run descriptive observations do not establish controlled causal effects."
+  ],
+  "needed_to_validate_original_seen_by_interface_caption": [
+    "Actual kernel and NIC driver identity/version for the Pi runs (uname -a and ethtool -i eth0, or saved equivalents).",
+    "Driver-specific definitions establishing which receive/drop/error counters count disjoint packet sets and why hardware packet totals disagree.",
+    "Time-matched before/after netlink or sysfs snapshots separating rx_dropped and rx_missed_errors, together with hardware packet snapshots over the same interval; a rerun is needed if equivalent records do not exist."
+  ],
+  "runs": [
+    {
+      "implementation": "Userspace",
+      "testbed": "Raspberry Pi 400",
+      "run": "usr-acc-gen-1",
+      "raw_directory": "results/data-raspberry/usr-acc-gen-1",
+      "manifest_name": "run.json",
+      "blocking": false,
+      "population": "Whole recording; one recording per implementation, not a matched traffic phase.",
+      "started_at": "2026-10-25T16:08:17.170732367+01:00",
+      "finished_at": "2026-10-25T16:52:47.171581554+01:00",
+      "window_count": 4918,
+      "duration_s": 2670.00084928,
+      "dev_rx_packets": 60763640,
+      "dev_rx_drop": 18201335,
+      "denominator_driver_counter_sum": 78964975,
+      "counts": {
+        "counted_in_windows": 21123303,
+        "interface_drops": 18201335,
+        "socket_drops": 33356522,
+        "late_drops": 6283426,
+        "unaccounted": 389
+      },
+      "shares_percent": {
+        "counted_in_windows": 26.75021805553665,
+        "interface_drops": 23.04988382507561,
+        "socket_drops": 42.242173824534234,
+        "late_drops": 7.95723167138342,
+        "unaccounted": 0.0004926234700891123
+      },
+      "applicability": {
+        "socket_drops": "measured",
+        "late_drops": "measured"
+      },
+      "hardware_good_packets": 78031635,
+      "hardware_residual_packets_if_used_as_denominator": -932951,
+      "hardware_residual_percent_if_used_as_denominator": -1.1956061153915332,
+      "driver_sum_minus_hardware_packets": 933340,
+      "driver_sum_excess_percent_of_hardware": 1.1961046311537622,
+      "skipped_frames": 389,
+      "final_partial_window": {
+        "epoch": 3339617638,
+        "start": "2026-10-25T16:52:47.044345856+01:00",
+        "end": "2026-10-25T16:52:47.581216768+01:00",
+        "packets": 0,
+        "bytes": 0
+      },
+      "discarded_windows": null,
+      "nic_warnings": [
+        "delta: ethtool.rx_bytes went from 3455970175 to 2512089434"
+      ],
+      "version": {
+        "commit": "f8824908c54d90a3f9de3420ede6850f42c6f01f",
+        "modified": true,
+        "go": "go1.25.4"
+      },
+      "source_sha256": {
+        "run.json": "dd7e238c214b6ab0af7dca3d5248aa291df6f192b8b8ab41391fcc2383dcf79a",
+        "windows.csv": "879f0dc7632f01d0d5c36a95aec8a93f9fd07d7ce82b4bc8051c43361f318c84"
+      }
+    },
+    {
+      "implementation": "Kernel",
+      "testbed": "Raspberry Pi 400",
+      "run": "ker-acc-gen-1",
+      "raw_directory": "results/data-raspberry/ker-acc-gen-1",
+      "manifest_name": "run_kernelspace.json",
+      "blocking": false,
+      "population": "Whole recording; one recording per implementation, not a matched traffic phase.",
+      "started_at": "2026-10-25T18:40:40.038454876+01:00",
+      "finished_at": "2026-10-25T19:25:10.046539164+01:00",
+      "window_count": 4973,
+      "duration_s": 2670.008084418,
+      "dev_rx_packets": 73643793,
+      "dev_rx_drop": 5238189,
+      "denominator_driver_counter_sum": 78881982,
+      "counts": {
+        "counted_in_windows": 73643163,
+        "interface_drops": 5238189,
+        "socket_drops": 0,
+        "late_drops": 0,
+        "unaccounted": 630
+      },
+      "shares_percent": {
+        "counted_in_windows": 93.35866205795894,
+        "interface_drops": 6.640539280567266,
+        "socket_drops": 0.0,
+        "late_drops": 0.0,
+        "unaccounted": 0.0007986614737951184
+      },
+      "applicability": {
+        "socket_drops": "not applicable: no AF_PACKET capture socket",
+        "late_drops": "not applicable: no userspace timestamp-to-window late rejection"
+      },
+      "hardware_good_packets": 78490062,
+      "hardware_residual_packets_if_used_as_denominator": -391290,
+      "hardware_residual_percent_if_used_as_denominator": -0.4985217109396601,
+      "driver_sum_minus_hardware_packets": 391920,
+      "driver_sum_excess_percent_of_hardware": 0.4993243603247504,
+      "skipped_frames": null,
+      "final_partial_window": {
+        "epoch": 3339634668,
+        "start": "2026-10-25T19:25:09.955977216+01:00",
+        "end": "2026-10-25T19:25:10.492848128+01:00",
+        "packets": 20,
+        "bytes": 21764
+      },
+      "discarded_windows": 1,
+      "nic_warnings": [
+        "delta: ethtool.rx_bytes went from 1883496472 to 1155779697"
+      ],
+      "version": {
+        "commit": "f8824908c54d90a3f9de3420ede6850f42c6f01f",
+        "modified": true,
+        "go": "go1.25.4"
+      },
+      "source_sha256": {
+        "run_kernelspace.json": "05c525dfaed13853ac2d88a675937c2ca64825af1da4faf42fd05a428448b300",
+        "windows.csv": "962381283a1fa7e3b0fa25fed5bc8febaf93f889ecab0f17121a59c080f698ad"
+      }
+    }
+  ]
+}

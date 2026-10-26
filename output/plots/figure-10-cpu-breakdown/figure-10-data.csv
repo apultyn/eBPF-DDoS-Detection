@@ -1,0 +1,5 @@
+testbed,implementation,run,raw_directory,sample_count,phase_start_elapsed_s,phase_end_elapsed_s,measured_interval_seconds,detector_process_cores,rest_of_host_cores,host_busy_cores,phase_observed_accounted_pps
+FABRIC,Userspace,usr-per-gen-3,results/data-fabric/usr-per-gen-3,1285,870.0,1560.0,689.878872732,0.575392796749996,0.16447621529653603,0.739869012046532,103063.36635361928
+FABRIC,Kernel,ker-per-gen-3,results/data-fabric/ker-per-gen-3,1285,870.0,1560.0,689.879672189,0.0037338815794159194,0.2649506549744001,0.268684536553816,103279.25560398339
+Raspberry Pi,Userspace,usr-acc-gen-1,results/data-raspberry/usr-acc-gen-1,1341,300.0,1020.0,719.942807026,1.0239418073293947,0.4726631861296043,1.496604993458999,67735.18330080196
+Raspberry Pi,Kernel,ker-acc-gen-1,results/data-raspberry/ker-acc-gen-1,1117,930.0,1530.0,599.682916275,0.03535967996506355,0.5894538503709854,0.6248135303360489,104710.50666249864

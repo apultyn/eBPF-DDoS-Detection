@@ -1,0 +1,170 @@
+{
+  "figure": 11,
+  "testbed": "FABRIC VM",
+  "status": "Provisional: saved alignment warnings are preserved.",
+  "alignment_methods": [
+    "cross-correlation"
+  ],
+  "alignment_warnings": {
+    "Userspace": [
+      "correlation 0.744 at the best offset is below 0.9; the live run and the reference may not show the same traffic",
+      "the best offset is only 1.00 times the next candidate (want >= 1.2); the alignment is ambiguous, for example with very even traffic"
+    ],
+    "Kernel": [
+      "correlation 0.738 at the best offset is below 0.9; the live run and the reference may not show the same traffic",
+      "the best offset is only 1.00 times the next candidate (want >= 1.2); the alignment is ambiguous, for example with very even traffic"
+    ]
+  },
+  "prediction": "window: malicious column, not window_or_ip",
+  "axis": "Trace elapsed minutes from 2018-12-01T14:21:52.153161000Z; ends at 2018-12-01T15:01:51.999846000Z.",
+  "window_ns": 536870912,
+  "effective_span_ns": 1073741824,
+  "ground_truth_source": "results/data-fabric/eval-ker-acc-gen-1-adjusted",
+  "ground_truth_groups": [
+    {
+      "start_ns": 1543674112153161000,
+      "end_ns": 1543674964980428928,
+      "state": "Benign"
+    },
+    {
+      "start_ns": 1543674964980428928,
+      "end_ns": 1543676511999846000,
+      "state": "Attack"
+    }
+  ],
+  "grey": "Saved excluded windows and intervals with no aligned native windows; these causes remain distinct in the data.",
+  "limitations": [
+    "Offsets and their recorded diagnostics are used verbatim from the evaluations. This plot does not independently validate replay timing or refit offsets.",
+    "The top truth strip uses the kernel evaluation's native grid because it covers the complete excerpt. Each outcome is computed against its own saved native-grid truth.",
+    "The two native grids are not resampled or paired, and have different scored-window counts; sub-window differences at truth transitions are expected.",
+    "Combined-mode labels apply to the current and previous window. The strip colors each current-window bin, approximately 0.537 seconds, using a 1.074-second effective span.",
+    "Grey intervals without native windows mean no windows mapped there under the saved offset, not a benign verdict or proven lack of physical capture.",
+    "The original corrected flow labels and packet trace remain remote; their saved adjusted evaluation outputs are used here.",
+    "Short states retain their actual durations. PNG rendering cannot reliably expose every isolated subpixel window; PDF/SVG and CSV preserve the intervals."
+  ],
+  "needed_for_validated_time_comparison": [
+    "Sender replay logs and independent packet/traffic landmarks validating trace-to-live timing throughout each run.",
+    "A corrected evaluation after resolving replay timing, with original corrected flow labels and trace provenance; rerun synchronized replay if a constant offset cannot fit."
+  ],
+  "runs": [
+    {
+      "implementation": "Userspace",
+      "directory": "results/data-fabric/eval-usr-acc-gen-1-adjusted",
+      "trace_start_ns": 1543674112153161000,
+      "trace_end_ns": 1543676511999846000,
+      "window_ns": 536870912,
+      "effective_span_ns": 1073741824,
+      "scores": {
+        "TN": 1479,
+        "FP": 33,
+        "TP": 2657,
+        "FN": 224
+      },
+      "saved_counts": {
+        "windows_total": 5257,
+        "excluded_before_excerpt": 4,
+        "excluded_after_excerpt": 785,
+        "excluded_not_evaluated": 0,
+        "excluded_warmup": 75,
+        "windows_scored": 4393,
+        "attack_window_share": 0.6558160710220806,
+        "attack_intervals": 251,
+        "offset_ns": 248998745516838336,
+        "mode": "combined",
+        "window_length_ns": 536870912,
+        "span_ns": 1073741824,
+        "warmup": 75
+      },
+      "alignment": {
+        "offset_ns": 248998745516838336,
+        "method": "cross-correlation",
+        "correlation": 0.7443848749673698,
+        "peak_ratio": 1.00265034506136,
+        "coarse_step_ns": 10000000,
+        "fine_step_ns": 1000000,
+        "warnings": [
+          "correlation 0.744 at the best offset is below 0.9; the live run and the reference may not show the same traffic",
+          "the best offset is only 1.00 times the next candidate (want >= 1.2); the alignment is ambiguous, for example with very even traffic"
+        ]
+      },
+      "warnings": [
+        "the capture socket dropped 104156 packets",
+        "the interface dropped 3251 packets",
+        "correlation 0.744 at the best offset is below 0.9; the live run and the reference may not show the same traffic",
+        "the best offset is only 1.00 times the next candidate (want >= 1.2); the alignment is ambiguous, for example with very even traffic"
+      ],
+      "first_mapped_window_elapsed_s": 0.0,
+      "unobserved_prefix_s": 0.0,
+      "version": {
+        "commit": "5793cd563993e5d36812a806844d46bf1b7c3ce9",
+        "modified": true,
+        "go": "go1.25.4"
+      },
+      "source_sha256": {
+        "results/data-fabric/eval-usr-acc-gen-1-adjusted/metrics.json": "9b41e12c0dbc9034938ea502f183857a3e8935a826ed34a70cc6a08c7c0451ac",
+        "results/data-fabric/eval-usr-acc-gen-1-adjusted/windows.csv": "c08e70eccf4d64f3ce7926bc9a9cb292f1ec1cad89fc4e84e6981691eb3b4755",
+        "results/data-fabric/usr-acc-gen-1/run.json": "c45aba3aed1d49593fe52ac3578446aa7658fd75cd40a0fcc6a6ddb98ffdd308",
+        "results/data-fabric/usr-acc-gen-1/windows.csv": "99de8ccc927c8373150822fc234d313b88b6fe8ef2528db23af8ac9761911375"
+      }
+    },
+    {
+      "implementation": "Kernel",
+      "directory": "results/data-fabric/eval-ker-acc-gen-1-adjusted",
+      "trace_start_ns": 1543674112153161000,
+      "trace_end_ns": 1543676511999846000,
+      "window_ns": 536870912,
+      "effective_span_ns": 1073741824,
+      "scores": {
+        "TN": 1475,
+        "FP": 37,
+        "TP": 2647,
+        "FN": 234
+      },
+      "saved_counts": {
+        "windows_total": 5028,
+        "excluded_before_excerpt": 10,
+        "excluded_after_excerpt": 550,
+        "excluded_not_evaluated": 0,
+        "excluded_warmup": 75,
+        "windows_scored": 4393,
+        "attack_window_share": 0.6558160710220806,
+        "attack_intervals": 251,
+        "offset_ns": 249004037984063360,
+        "mode": "combined",
+        "window_length_ns": 536870912,
+        "span_ns": 1073741824,
+        "warmup": 75
+      },
+      "alignment": {
+        "offset_ns": 249004037984063360,
+        "method": "cross-correlation",
+        "correlation": 0.7384216000097793,
+        "peak_ratio": 1.00098043179585,
+        "coarse_step_ns": 10000000,
+        "fine_step_ns": 1000000,
+        "warnings": [
+          "correlation 0.738 at the best offset is below 0.9; the live run and the reference may not show the same traffic",
+          "the best offset is only 1.00 times the next candidate (want >= 1.2); the alignment is ambiguous, for example with very even traffic"
+        ]
+      },
+      "warnings": [
+        "the interface dropped 9689 packets",
+        "correlation 0.738 at the best offset is below 0.9; the live run and the reference may not show the same traffic",
+        "the best offset is only 1.00 times the next candidate (want >= 1.2); the alignment is ambiguous, for example with very even traffic"
+      ],
+      "first_mapped_window_elapsed_s": 0.0,
+      "unobserved_prefix_s": 0.0,
+      "version": {
+        "commit": "73fe3a2c2cf218165dbe9b8a7cba10466b0369ae",
+        "modified": true,
+        "go": "go1.25.4"
+      },
+      "source_sha256": {
+        "results/data-fabric/eval-ker-acc-gen-1-adjusted/metrics.json": "208f7261883aea74aa94ddae74df0a4f623c6d15df98767a57113d8b0f7bf5d0",
+        "results/data-fabric/eval-ker-acc-gen-1-adjusted/windows.csv": "74fbc5e5f4f9b9c7a2842e5589a9371c1bec1f4dd6047bef17a81258c4fe3b6a",
+        "results/data-fabric/ker-acc-gen-1/run.json": "1c16ad716eaee630b5da2b478ea9e8017a71f607c7b35020846abb196e2acf75",
+        "results/data-fabric/ker-acc-gen-1/windows.csv": "5eca8fbbba6b4bdefe1b14d4f8ef8f72abf13678a3dee0e06c77cf0287e78516"
+      }
+    }
+  ]
+}

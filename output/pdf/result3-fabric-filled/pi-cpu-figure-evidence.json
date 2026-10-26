@@ -1,0 +1,54 @@
+{
+  "runs": [
+    {
+      "phase": {
+        "first_index": 508,
+        "stop_index_exclusive": 1945,
+        "start_ns": 1792941199443623936,
+        "end_ns": 1792941970927124480,
+        "start_elapsed_s": 272.730423296,
+        "end_elapsed_s": 1044.21392384,
+        "duration_s": 771.483500544
+      },
+      "cpu_flood": {
+        "samples": 1437,
+        "host_percent_all_cores": 38.65624654995333,
+        "process_percent_one_core": 101.61517306986022,
+        "process_cores": 1.0161517306986023,
+        "host_cores": 1.4977245699410298,
+        "rest_cores": 0.48157283924242744,
+        "counted_mean_kpps": 24.255188849541405,
+        "counted_max_window_kpps": 50.58757960796356,
+        "host_us_per_counted_packet": 61.748636391182394,
+        "summed_wall_interval_s": 771.48363804
+      }
+    },
+    {
+      "phase": {
+        "first_index": 1684,
+        "stop_index_exclusive": 2935,
+        "start_ns": 1792950944187547648,
+        "end_ns": 1792951615813058560,
+        "start_elapsed_s": 904.090615808,
+        "end_elapsed_s": 1575.71612672,
+        "duration_s": 671.625510912
+      },
+      "cpu_flood": {
+        "samples": 1251,
+        "host_percent_all_cores": 16.518159005875194,
+        "process_percent_one_core": 3.5226580310134143,
+        "process_cores": 0.03522658031013415,
+        "host_cores": 0.6547095107741961,
+        "rest_cores": 0.619482930464062,
+        "counted_mean_kpps": 104.83004569673805,
+        "counted_max_window_kpps": 219.25941109657288,
+        "host_us_per_counted_packet": 6.245443160793047,
+        "summed_wall_interval_s": 671.626107096
+      }
+    }
+  ],
+  "source_sha256": {
+    "results/data-raspberry/usr-acc-gen-1/windows.csv": "879f0dc7632f01d0d5c36a95aec8a93f9fd07d7ce82b4bc8051c43361f318c84",
+    "results/data-raspberry/ker-acc-gen-1/windows.csv": "962381283a1fa7e3b0fa25fed5bc8febaf93f889ecab0f17121a59c080f698ad"
+  }
+}

@@ -1,0 +1,79 @@
+\subsection{Summary}
+
+In this section, an overview is presented for system performance comparing the the userspace detection model against the in-kernel detection model to evaluate their effectiveness. This is followed by a summary of statistics to ensure that the results of the different models are not skewed due to code implementation.
+
+\subsubsection{System Performance}
+
+\begin{figure}[h]
+    \includegraphics[width=.22\textwidth]{resources/mockdata/summary_memory_utilization_raspberry.jpg}\hfill
+    \includegraphics[width=.22\textwidth]{resources/mockdata/summary_memory_utilization_fabric.jpg}
+    \includegraphics[width=.22\textwidth]{resources/mockdata/summary_cpu_utilization_raspberry.jpg}\hfill
+    \includegraphics[width=.22\textwidth]{resources/mockdata/summary_cpu_utilization_fabric.png}
+    \\[\smallskipamount]
+    \includegraphics[width=.22\textwidth]{resources/mockdata/summary_throughput_raspberry.jpg}\hfill
+    \includegraphics[width=.22\textwidth]{resources/mockdata/summary_throughput_fabric.jpg}
+    \includegraphics[width=.22\textwidth]{resources/mockdata/summary_detection_latency_raspberry.jpg}\hfill
+    \includegraphics[width=.22\textwidth]{resources/mockdata/summary_detection_latency_fabric.jpg}
+    \caption{Averaged memory utilization, CPU utilization, throughput and detection latency results across six datasets between userspace and in-kernel detection models on a Raspberry Pi 400 and FABRIC slice testbed respectively}
+    \label{Metric Summary}
+\end{figure}
+
+For all metrics of system performance, the in-kernel detection model accomplishes the same task of analysis as the userspace detection model using far fewer resources, thus allowing a higher throughput that can be directly correlated to higher availability. To be precise, the histograms in Figure \ref{Metric Summary} show that the in-kernel detection model achieved:
+\begin{itemize}
+    \item Memory Utilization: 37\% Reduction
+    \item CPU Utilization: 28.5\% Reduction
+    \item Throughput: 173\% Increase
+    \item Detection Latency: 44\% Reduction
+    
+\end{itemize}
+
+\subsubsection{Result Reliability}
+
+To ensure that results are reliable and that neither model is disproportionately efficient comparatively, both models were evaluated on accuracy, recall and F1 score over the six datasets used in this study. This confirmed that the userspace detection model and the in-kernel detection model possessed near identical detection capabilities with margins that were proved to be statistically insignificant. The reason for possible variance is that the models are written in different programming languages which necessitate varying implementations due to software demands.
+
+% What tests do we want to do to yield results?
+% - Core:
+%    - User Space Implementation (Benchmark)
+%    - Kernel Space Implementation (Test)
+%   --> Compare memory usage, throughput, latency
+% Might be interesting to consider what load the host can endure with this system compared to the userspace system
+% - Commit to a stresstest
+% - Run rising volumetric attack?
+% - Do we want to try tests using FABRIC as well?
+%   --> Maybe there are systems we can test that we dont have access to through FABRIC?
+
+% This section also asks what datasets should be used
+% SISTAR used:
+% CIC-IDS2017, CIC-IDS2018: 
+% - Simulate DoS and DDoS attacks at enterprise networks
+% CIC-DDoS2019:
+% - High pressure attacks against cloud services
+% - Includes multiple DDoS variants
+% CICIoT2023, IoT23:
+% - Botnet attacks against industrial and IoT environments
+% - Features latest exploitation variants
+% UNSW-NB15: 
+% - Traditional attacks against university networks
+% We will have to investigate this further!
+
+% Lastly, we should consider how the results should be shown and ordered:
+% - Per Dataset:
+%    - Memory, Latency, Throughput and Processing Graph
+% - Per Metric:
+%    - CIC-2019, ...
+% I think I prefer to order them per metric, it seems more useful to get a proper overview
+
+% It is probably interesting to know the increase in latency etc compared to not running this as well!
+
+% Present results of our research
+% Give idea of how results are presented so the reader can better understand them
+% Remind reader how the results where obtained
+
+
+%This section presents empirical results of the proposed in-kernel mitigation framework, compared against a conventional baseline implemented in userspace. System performance was assessed across four key metrics --- memory overhead, CPU utilization, latency and throughput --- on two distinct hardware environments, ranging from a single-node deployment on a Raspberry Pi 400 edge device and multi-node deployments on FABRIC slices. Each testbed was subject to various volumetric DDoS attacks synthesized from six select datasets covering enterprise, cloud, IoT, industry and university networks. Experiments were conducted over ten independent iterations of each dataset, before the arithmetic mean was taken to produce the graphs presented below. Section \ref{Methodology} explains the specific hardware configurations, dataset choices and their motivations in greater detail.
+
+% Accuracy, recall and F1 score between the two models should be identical
+
+% One way to extend this is to also use datasets for specific DDoS attacks, making it broader and more comprehensive
+
+% Each subsection should have a goal statement, as well as an explanatory text to each graph collection

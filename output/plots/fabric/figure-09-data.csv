@@ -1,0 +1,3 @@
+implementation,run,denominator_driver_counter_sum,counted_in_windows_packets,counted_in_windows_percent,interface_drops_packets,interface_drops_percent,socket_drops_packets,socket_drops_percent,late_drops_packets,late_drops_percent,unaccounted_packets,unaccounted_percent,socket_drops_status,late_drops_status
+Userspace,usr-acc-gen-1,78563556,78455731,99.86275443031117,3251,0.004138050981297232,104156,0.13257546539772208,13,1.6547112505956323e-05,405,0.0005155061973009471,measured,measured
+Kernel,ker-acc-gen-1,78563556,78553462,99.98715180356653,9689,0.012332690236170063,0,0.0,0,0.0,405,0.0005155061973009471,not applicable,not applicable

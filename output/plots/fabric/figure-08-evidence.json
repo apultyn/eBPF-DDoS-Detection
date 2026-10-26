@@ -1,0 +1,64 @@
+{
+  "figure": 8,
+  "source_mode": "Saved PCAP-derived reference and saved adjusted-label evaluation; original files remain on remote experiment machines.",
+  "trace_start_utc": "2018-12-01T14:21:52.153161000Z",
+  "trace_end_utc": "2018-12-01T15:01:51.999846000Z",
+  "trace_duration_s": 2399.846685,
+  "reference": "results\\data-fabric\\ref-pcap",
+  "reference_window_ns": 536870912,
+  "reference_windows": 4471,
+  "plotted_packets_ip": 78567550,
+  "manifest_packets_ip": 78567754,
+  "pcap_frames_skipped_by_ip_parser": 1838,
+  "last_partial_window_omitted": {
+    "epoch": 2875321567,
+    "start": "2018-12-01T15:01:51.968559104Z",
+    "end": "2018-12-01T15:01:52.505430016Z",
+    "packets": 204,
+    "bytes": 97608
+  },
+  "tail_omitted_seconds": 0.031286896,
+  "peak_packet_rate_pps": 245928.76434326172,
+  "rate_formula": "packets / ((end_ns - start_ns) / 1e9); no smoothing, replay-speed scaling, or live-run rates.",
+  "ground_truth_source": "results\\data-fabric\\eval-usr-acc-gen-1-adjusted",
+  "ground_truth_column": "truth, with attack_labels; all rows in the excerpt, without scoring exclusions.",
+  "ground_truth_window_ns": 536870912,
+  "ground_truth_effective_span_ns": 1073741824,
+  "ground_truth_mode": "combined",
+  "ground_truth_windows": 4471,
+  "ground_truth_groups": [
+    {
+      "start_ns": 1543674112153161000,
+      "end_ns": 1543674964974203456,
+      "attack": false,
+      "label": "BENIGN"
+    },
+    {
+      "start_ns": 1543674964974203456,
+      "end_ns": 1543676511999846000,
+      "attack": true,
+      "label": "DrDoS_DNS"
+    }
+  ],
+  "source_sha256": {
+    "results\\data-fabric\\ref-pcap\\run.json": "71227f1b5747a552bd86250efa239880126890831457fec2c7f18d1826098689",
+    "results\\data-fabric\\ref-pcap\\windows.csv": "e001cd3fb0326437a4885af60709b20fc3da579a8637beb30b0f6a7d805f1548",
+    "results\\data-fabric\\eval-usr-acc-gen-1-adjusted\\metrics.json": "9b41e12c0dbc9034938ea502f183857a3e8935a826ed34a70cc6a08c7c0451ac",
+    "results\\data-fabric\\eval-usr-acc-gen-1-adjusted\\windows.csv": "c08e70eccf4d64f3ce7926bc9a9cb292f1ec1cad89fc4e84e6981691eb3b4755"
+  },
+  "limitations": [
+    "The PCAP and original corrected flow labels were not independently reread; this figure uses their saved derived outputs.",
+    "IP packet counts exclude frames skipped by the detector parser; this is not an all-Ethernet-frame rate.",
+    "The final 204-packet partial reference window is omitted from the rate curve; its unplotted tail is about 0.0313 seconds.",
+    "The first complete epoch bin begins just before the first excerpt packet; the plot clips it at trace start and retains its full-bin rate denominator.",
+    "The truth strip preserves the saved evaluation's own trace-time window grid and combined two-window overlap rule; it is not recomputed on the PCAP reference grid.",
+    "Warm-up and scoring exclusions do not mask ground truth, because this is a trace-label profile rather than a detector-score plot.",
+    "Existing live alignment warnings are not repaired by this figure; no live prediction or received-traffic comparison is plotted.",
+    "Saved ground truth records adjusted labels but contains no hash of the original corrected flow-label file."
+  ],
+  "needed_for_independent_rebuild": [
+    "Excerpt PCAP (01-12.pcap) or a fresh trace-time packet-count export with explicit window edges and packet inclusion rules.",
+    "Corrected flow labels with start/end trace timestamps, attack type, benign/attack indicator, and the timestamp correction/UTC conversion metadata; alternatively fresh window-level truth on the reference grid with its overlap rule.",
+    "Excerpt metadata and source hashes tying the exports to the replayed input."
+  ]
+}

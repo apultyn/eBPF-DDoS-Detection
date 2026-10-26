@@ -1,0 +1,16 @@
+% Requires graphicx. Copy the PDF beside this fragment or adapt its path.
+% Figure number 11 is assigned by the surrounding report's figure counter.
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\linewidth]{figure-11-window-classification.pdf}
+    \caption{Window classification over time on the Raspberry Pi
+    400, with blocking disabled. The strips show corrected-label ground truth,
+    userspace outcome and kernel outcome using the manual trace offsets
+    stored in the updated evaluations.
+    TP, TN, FP and FN use the window-level prediction; grey indicates excluded
+    windows or intervals with no aligned windows. The top strip uses the kernel
+    evaluation's complete native truth grid; each outcome retains its own native
+    grid. Combined-mode truth spans the current and previous 536.870912~ms
+    window. The offsets are used verbatim; plotting does not refit them.}
+    \label{fig:pi-window-classification}
+\end{figure}

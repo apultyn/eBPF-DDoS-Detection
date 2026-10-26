@@ -1,0 +1,14 @@
+% Requires graphicx. Copy the PDF beside this fragment or adapt its path.
+% Figure number 8 is assigned by the surrounding report's figure counter.
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\linewidth]{figure-08-traffic-profile.pdf}
+    \caption{Traffic profile of the replayed excerpt, from saved window counts
+    produced by offline PCAP processing on the original trace clock. The curve
+    shows IP packet rate in 536.870912~ms windows; the final 204-packet partial
+    window is omitted. Bottom: saved window-level ground truth from the adjusted
+    flow-label evaluation. Combined-mode truth spans the current and previous
+    window (1.073741824~s) and is shown over each current-window bin. The original
+    PCAP and corrected label files were not independently reprocessed for this figure.}
+    \label{fig:excerpt-traffic-profile}
+\end{figure}

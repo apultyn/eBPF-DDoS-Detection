@@ -1,0 +1,48 @@
+{
+  "testbed": "FABRIC VM",
+  "blocking": false,
+  "comparison_runs": [
+    "usr-acc-gen-1",
+    "ker-acc-gen-1"
+  ],
+  "common_excerpt": "Figure 8 is a shared trace profile, not a separate live FABRIC recording.",
+  "packet_accounting": [
+    {
+      "implementation": "Userspace",
+      "counts": {
+        "counted_in_windows": 78455731,
+        "interface_drops": 3251,
+        "socket_drops": 104156,
+        "late_drops": 13,
+        "unaccounted": 405
+      },
+      "denominator": 78563556
+    },
+    {
+      "implementation": "Kernel",
+      "counts": {
+        "counted_in_windows": 78553462,
+        "interface_drops": 9689,
+        "socket_drops": 0,
+        "late_drops": 0,
+        "unaccounted": 405
+      },
+      "denominator": 78563556
+    }
+  ],
+  "cpu": [
+    {
+      "implementation": "Userspace",
+      "detector_process_cores": 0.5615467589052975,
+      "rest_of_host_cores": 0.13273430727574717,
+      "host_busy_cores": 0.6942810661810447
+    },
+    {
+      "implementation": "Kernel",
+      "detector_process_cores": 0.004326282803784686,
+      "rest_of_host_cores": 0.27839011835086036,
+      "host_busy_cores": 0.2827164011546451
+    }
+  ],
+  "source_document": "C:/Users/jedre/Downloads/result3.tex (read as a figure reference; not edited)"
+}

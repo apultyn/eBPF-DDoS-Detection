@@ -270,7 +270,7 @@ def test_missing_evaluation_reports_unavailable_truth_in_manifest(tmp_path):
     assert not any("accuracy_" in Path(path).name for path in record["outputs"])
 
 
-def test_accuracy_figure_keeps_alignment_warning_visible(tmp_path, monkeypatch):
+def test_accuracy_figure_keeps_provisional_title_without_warning_footer(tmp_path, monkeypatch):
     evaluation = write_run(tmp_path / "evaluation", rows=[{
         "start_ns": T0, "end_ns": T0 + S, "truth": "true",
         "evaluated": "true", "excluded": "", "malicious": "true",
@@ -288,4 +288,5 @@ def test_accuracy_figure_keeps_alignment_warning_visible(tmp_path, monkeypatch):
     plot.plot_accuracy(evaluation, tmp_path / "out", ["png"])
 
     assert any("PROVISIONAL" in text for text in captured)
-    assert any(warning in text for text in captured)
+    assert not any(warning in text for text in captured)
+    assert len(captured) == 1  # Only the title; no figure footer.

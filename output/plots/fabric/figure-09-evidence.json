@@ -1,0 +1,100 @@
+{
+  "figure": 9,
+  "testbed": "FABRIC VM",
+  "denominator": "Whole-run delta dev.rx_packets + delta dev.rx_drop; interface-counter estimate, not verified wire arrivals.",
+  "runs": [
+    {
+      "implementation": "Userspace",
+      "run": "usr-acc-gen-1",
+      "counts": {
+        "counted_in_windows": 78455731,
+        "interface_drops": 3251,
+        "socket_drops": 104156,
+        "late_drops": 13,
+        "unaccounted": 405
+      },
+      "shares_percent": {
+        "counted_in_windows": 99.86275443031117,
+        "interface_drops": 0.004138050981297232,
+        "socket_drops": 0.13257546539772208,
+        "late_drops": 1.6547112505956323e-05,
+        "unaccounted": 0.0005155061973009471
+      },
+      "denominator_driver_counter_sum": 78563556,
+      "applicability": {
+        "socket_drops": "measured",
+        "late_drops": "measured"
+      },
+      "version": {
+        "commit": "5793cd563993e5d36812a806844d46bf1b7c3ce9",
+        "modified": true,
+        "go": "go1.25.4"
+      },
+      "duration_s": 2823.971069131,
+      "duplicate_interface_drop_observation": "dev.rx_drop == ethtool.rx_out_of_buffer; counted once",
+      "independent_hardware_packet_total": null,
+      "hardware_note": "rx_packets_phy is zero; ethtool.rx_packets repeats the driver received count, not an independently measured arrival denominator.",
+      "final_partial_window": {
+        "epoch": 3339118657,
+        "start": "2026-10-22T13:27:58.659805184Z",
+        "end": "2026-10-22T13:27:59.196676096Z",
+        "packets": 0,
+        "bytes": 0
+      },
+      "source_sha256": {
+        "results/data-fabric/usr-acc-gen-1/run.json": "c45aba3aed1d49593fe52ac3578446aa7658fd75cd40a0fcc6a6ddb98ffdd308",
+        "results/data-fabric/usr-acc-gen-1/windows.csv": "99de8ccc927c8373150822fc234d313b88b6fe8ef2528db23af8ac9761911375"
+      }
+    },
+    {
+      "implementation": "Kernel",
+      "run": "ker-acc-gen-1",
+      "counts": {
+        "counted_in_windows": 78553462,
+        "interface_drops": 9689,
+        "socket_drops": 0,
+        "late_drops": 0,
+        "unaccounted": 405
+      },
+      "shares_percent": {
+        "counted_in_windows": 99.98715180356653,
+        "interface_drops": 0.012332690236170063,
+        "socket_drops": 0.0,
+        "late_drops": 0.0,
+        "unaccounted": 0.0005155061973009471
+      },
+      "denominator_driver_counter_sum": 78563556,
+      "applicability": {
+        "socket_drops": "not applicable",
+        "late_drops": "not applicable"
+      },
+      "version": {
+        "commit": "73fe3a2c2cf218165dbe9b8a7cba10466b0369ae",
+        "modified": true,
+        "go": "go1.25.4"
+      },
+      "duration_s": 2699.755564168,
+      "duplicate_interface_drop_observation": "dev.rx_drop == ethtool.rx_out_of_buffer; counted once",
+      "independent_hardware_packet_total": null,
+      "hardware_note": "rx_packets_phy is zero; ethtool.rx_packets repeats the driver received count, not an independently measured arrival denominator.",
+      "final_partial_window": {
+        "epoch": 3339128280,
+        "start": "2026-10-22T14:54:04.96859136Z",
+        "end": "2026-10-22T14:54:05.505462272Z",
+        "packets": 0,
+        "bytes": 0
+      },
+      "source_sha256": {
+        "results/data-fabric/ker-acc-gen-1/run.json": "1c16ad716eaee630b5da2b478ea9e8017a71f607c7b35020846abb196e2acf75",
+        "results/data-fabric/ker-acc-gen-1/windows.csv": "5eca8fbbba6b4bdefe1b14d4f8ef8f72abf13678a3dee0e06c77cf0287e78516"
+      }
+    }
+  ],
+  "limitations": [
+    "The interface-drop driver observation is included once, despite matching ethtool and procfs observations.",
+    "Independent physical arrival counters are unavailable; the denominator is an explicit estimate.",
+    "Unaccounted includes non-IP/background/boundary differences; it is not automatically packet loss. The userspace residual equals 405 parser-skipped frames.",
+    "Kernel socket and userspace late-rejection categories are inapplicable, not imputed missing measurements.",
+    "Different commits and modified source trees limit causal comparisons. Whole-recording counters are not aligned high-rate measurements."
+  ]
+}

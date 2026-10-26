@@ -1,0 +1,17 @@
+% Requires graphicx. Copy the PDF beside this fragment or adapt its path.
+% Figure number 9 is assigned by the surrounding report's figure counter.
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\linewidth]{figure-09-packet-accounting.pdf}
+    \caption{Provisional packet accounting on the Raspberry Pi 400 with blocking
+    disabled. Whole-recording components are normalized by the explicitly
+    defined driver-counter sum, $\Delta\mathrm{rx\_packets} +
+    \Delta\mathrm{rx\_drop}$, rather than a verified physical-interface packet
+    total. Each bar represents one recording. The unaccounted component is the
+    residual; for userspace it consists of 389 parser-skipped frames. Socket
+    drops and userspace late rejection are inapplicable to the kernel path.
+    Independent hardware packet totals do not reconcile with the driver-counter
+    sum, so a definitive partition of packets seen by the interface requires
+    validation of the actual driver's counter semantics.}
+    \label{fig:pi-packet-accounting}
+\end{figure}

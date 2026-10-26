@@ -1,0 +1,1855 @@
+{
+  "scope": "Four individual FABRIC recordings corresponding to the supplied plots; no pooled repetitions or causal effects.",
+  "runs": [
+    {
+      "name": "usr-per-gen-3",
+      "path": "C:/Dane/Studia/SEM_2/eBPF-DDoS-Detection/results/data-from-tests/usr-per-gen-3",
+      "variant": "userspace",
+      "source": "live",
+      "blocking": false,
+      "attachment_label": "generic",
+      "window_length_ns": 536870912,
+      "observed_window_lengths_ns": [
+        536870912
+      ],
+      "config": {
+        "window_length": "536.870912ms",
+        "max_empty": 0,
+        "counts": "heavykeeper",
+        "mode": "combined",
+        "hk_depth": 4,
+        "hk_width": 1024,
+        "hk_decay_base": 1.08,
+        "k": 10,
+        "seed": 42,
+        "cms_width": 1024,
+        "cms_depth": 4,
+        "iqr_base_threshold": 200,
+        "iqr_multiplier": 1.5,
+        "iqr_offset_multiplier": 2,
+        "iqr_min_samples": 4,
+        "iqr_max_history": 500,
+        "iqr_max_tracked_ips": 1000,
+        "iqr_ip_mode": "hybrid",
+        "iqr_max_shared_history": 5000,
+        "block": false
+      },
+      "version": {
+        "commit": "3e8e5250a78027f39f2c4a7b39f643db9c3da744",
+        "modified": true,
+        "go": "go1.25.4"
+      },
+      "end_reason": "duration_reached",
+      "started_at": "2026-10-24T11:27:07.557271743Z",
+      "finished_at": "2026-10-24T12:11:37.557530873Z",
+      "coverage": {
+        "windows": 4969,
+        "evaluated_windows": 4968,
+        "after_warmup_windows": 4964,
+        "warmup_unknown_windows": 0,
+        "window_span_seconds": 2667.711561728,
+        "window_duration_seconds": 2667.711561728
+      },
+      "traffic": {
+        "counted_packets": 78413475,
+        "blocked_packets": 0,
+        "counted_plus_blocked_packets": 78413475,
+        "blocked_share_of_counted_plus_blocked": 0.0,
+        "socket_dropped_run_total": 147310,
+        "manifest_packets_run_total": 78413487
+      },
+      "cpu": {
+        "host_source": "cpu.csv",
+        "host_busy_percent": {
+          "n": 5341,
+          "missing": 0,
+          "mean": 11.827318998721477,
+          "min": 0.0,
+          "p50": 2.0,
+          "p95": 44.086021505376344,
+          "p99": 54.34782608695652,
+          "max": 62.5,
+          "invalid_intervals": 0,
+          "weighted_mean": 11.457248402823033,
+          "numerator_ns": 599520000000,
+          "denominator_ns": 5232670000000
+        },
+        "host_softirq_percent": {
+          "n": 5341,
+          "missing": 0,
+          "mean": 5.863649174733842,
+          "min": 0.0,
+          "p50": 1.0,
+          "p95": 22.916666666666668,
+          "p99": 29.740472293663824,
+          "max": 34.375,
+          "invalid_intervals": 0,
+          "weighted_mean": 5.67454091314759,
+          "numerator_ns": 296930000000,
+          "denominator_ns": 5232670000000
+        },
+        "busiest_core_percent": {
+          "n": 5341,
+          "missing": 0,
+          "invalid_negative": 0,
+          "mean": 14.319168695000934,
+          "min": 0.0,
+          "p50": 2.04,
+          "p95": 54.169999999999995,
+          "p99": 62.9240000000001,
+          "max": 71.43
+        },
+        "process_percent_one_core": {
+          "n": 4969,
+          "missing": 0,
+          "mean": 17.66863981172635,
+          "min": 0.02906831256371655,
+          "p50": 3.3238350059020827,
+          "p95": 64.09849784554974,
+          "p99": 76.91197862740044,
+          "max": 85.38147171002758,
+          "invalid_intervals": 0,
+          "weighted_mean": 17.65318902833157,
+          "numerator_ns": 471331281000,
+          "denominator_ns": 2669949776460
+        }
+      },
+      "memory": {
+        "samples": 5340,
+        "bpf_maps_bytes": null,
+        "bpf_maps_start_bytes": null,
+        "bpf_maps_stable": false,
+        "main_mib": {
+          "n": 5340,
+          "missing": 0,
+          "invalid_negative": 0,
+          "mean": 6.896855249297753,
+          "min": 1.640625,
+          "p50": 7.1328125,
+          "p95": 7.43359375,
+          "p99": 7.46484375,
+          "max": 8.03515625
+        },
+        "main_plus_bpf_maps_mib": {
+          "n": 0,
+          "missing": 5340,
+          "invalid_negative": 0,
+          "mean": null,
+          "min": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "max": null
+        },
+        "current_mib": {
+          "n": 5340,
+          "missing": 0,
+          "invalid_negative": 0,
+          "mean": 7.967583977059925,
+          "min": 1.640625,
+          "p50": 8.224609375,
+          "p95": 9.2734375,
+          "p99": 9.462656249999995,
+          "max": 9.7578125
+        },
+        "go_heap_mib": {
+          "n": 4969,
+          "missing": 0,
+          "invalid_negative": 0,
+          "mean": 2.434073532819988,
+          "min": 0.8274002075195312,
+          "p50": 2.42919921875,
+          "p95": 3.629454040527343,
+          "p99": 3.75394775390625,
+          "max": 3.8163375854492188
+        }
+      },
+      "latency_ms": {
+        "evaluation": {
+          "n": 4968,
+          "missing": 0,
+          "invalid_negative": 0,
+          "mean": 0.13913339492753624,
+          "min": 0.002806,
+          "p50": 0.1344555,
+          "p95": 0.24932264999999995,
+          "p99": 0.36440492999999996,
+          "max": 1.417805
+        },
+        "queue": {
+          "n": 4968,
+          "missing": 0,
+          "invalid_negative": 0,
+          "mean": 0.0008381557971014492,
+          "min": 0.0002,
+          "p50": 0.000481,
+          "p95": 0.001693,
+          "p99": 0.008672999999999986,
+          "max": 0.057149
+        },
+        "window_close": {
+          "n": 4968,
+          "missing": 0,
+          "invalid_negative": 0,
+          "mean": 5.829917598027375,
+          "min": 0.008131,
+          "p50": 10.046616,
+          "p95": 11.01170065,
+          "p99": 11.07832175,
+          "max": 11.147948
+        },
+        "decision": {
+          "n": 4968,
+          "missing": 0,
+          "invalid_negative": 0,
+          "mean": 5.969889148752013,
+          "min": 0.109535,
+          "p50": 10.1448645,
+          "p95": 11.1197493,
+          "p99": 11.216195429999999,
+          "max": 11.627501
+        },
+        "block_update": {
+          "n": 0,
+          "missing": 4968,
+          "invalid_negative": 0,
+          "mean": null,
+          "min": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "max": null
+        },
+        "verdict_to_block_update": {
+          "n": 0,
+          "missing": 4968,
+          "invalid_negative": 0,
+          "mean": null,
+          "min": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "max": null
+        }
+      },
+      "latency_after_warmup_ms": {
+        "evaluation": {
+          "n": 4964,
+          "missing": 0,
+          "invalid_negative": 0,
+          "mean": 0.13922986261079773,
+          "min": 0.002806,
+          "p50": 0.13451449999999998,
+          "p95": 0.24935084999999993,
+          "p99": 0.36442976999999993,
+          "max": 1.417805
+        },
+        "queue": {
+          "n": 4964,
+          "missing": 0,
+          "invalid_negative": 0,
+          "mean": 0.0008385042304593069,
+          "min": 0.0002,
+          "p50": 0.000481,
+          "p95": 0.001693,
+          "p99": 0.008680999999999979,
+          "max": 0.057149
+        },
+        "window_close": {
+          "n": 4964,
+          "missing": 0,
+          "invalid_negative": 0,
+          "mean": 5.8257649313053985,
+          "min": 0.008131,
+          "p50": 10.045937,
+          "p95": 11.01066565,
+          "p99": 11.07834075,
+          "max": 11.147948
+        },
+        "decision": {
+          "n": 4964,
+          "missing": 0,
+          "invalid_negative": 0,
+          "mean": 5.965833298146656,
+          "min": 0.109535,
+          "p50": 10.1439785,
+          "p95": 11.119797700000001,
+          "p99": 11.21622227,
+          "max": 11.627501
+        },
+        "block_update": {
+          "n": 0,
+          "missing": 4964,
+          "invalid_negative": 0,
+          "mean": null,
+          "min": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "max": null
+        },
+        "verdict_to_block_update": {
+          "n": 0,
+          "missing": 4964,
+          "invalid_negative": 0,
+          "mean": null,
+          "min": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "max": null
+        }
+      },
+      "saved_evaluation": null,
+      "warnings": [
+        "XDP attachment mode is a directory label, not verified manifest metadata.",
+        "Fixed separately charged BPF map memory is unconfirmed; combined memory is null.",
+        "Run used a modified source tree; commit alone does not identify the build."
+      ],
+      "high_rate_phase": {
+        "elapsed_seconds": [
+          850,
+          1575
+        ],
+        "selection": "sample endpoints within the interval; not reference-clock aligned",
+        "host_cpu": {
+          "n": 1450,
+          "missing": 0,
+          "mean": 38.98470141059576,
+          "min": 0.0,
+          "p50": 38.94736842105263,
+          "p95": 52.6627051499717,
+          "p99": 57.89473684210526,
+          "max": 62.5,
+          "invalid_intervals": 0,
+          "weighted_mean": 38.95058220026523,
+          "numerator_ns": 534550000000,
+          "denominator_ns": 1372380000000
+        }
+      },
+      "source_hashes": {
+        "cpu.csv": "699ff14c18abb7376785aaaeb795ad6f4ef747fe4ef2eac40ad40728cfb3d4a1",
+        "memory.csv": "f25645e15f13d849f1b1dc7611666b7baa36d9af5673e3ea81d4d4079126ad4d",
+        "run.json": "ad3db0c0a2cb54edd98d2244fd7895b5561cbe23d18c64c4e7fe7245bc0bc077",
+        "windows.csv": "f2859e4ce419c43d58fae3b52cf3d6896cb206334829015d472779f74617c1e4"
+      }
+    },
+    {
+      "name": "ker-per-gen-3",
+      "path": "C:/Dane/Studia/SEM_2/eBPF-DDoS-Detection/results/data-from-tests/ker-per-gen-3",
+      "variant": "kernel",
+      "source": "xdp",
+      "blocking": false,
+      "attachment_label": "generic",
+      "window_length_ns": 536870912,
+      "observed_window_lengths_ns": [
+        536870912
+      ],
+      "config": {
+        "window_length": "536.870912ms",
+        "mode": "combined",
+        "hk_depth": 4,
+        "hk_width": 1024,
+        "hk_topk": 10,
+        "k": 10,
+        "iqr_base_threshold": 200,
+        "iqr_multiplier": 1.5,
+        "iqr_offset_multiplier": 2,
+        "iqr_min_samples": 4,
+        "iqr_max_history": 500,
+        "iqr_max_tracked_ips": 1000,
+        "iqr_ip_mode": "hybrid",
+        "iqr_max_shared_history": 5000,
+        "block": false
+      },
+      "version": {
+        "commit": "3e8e5250a78027f39f2c4a7b39f643db9c3da744",
+        "modified": true,
+        "go": "go1.25.4"
+      },
+      "end_reason": "duration_reached",
+      "started_at": "2026-10-24T12:12:28.510228983Z",
+      "finished_at": "2026-10-24T12:56:58.514291866Z",
+      "coverage": {
+        "windows": 4972,
+        "evaluated_windows": 4971,
+        "after_warmup_windows": 4967,
+        "warmup_unknown_windows": 0,
+        "window_span_seconds": 2669.322174464,
+        "window_duration_seconds": 2669.322174464
+      },
+      "traffic": {
+        "counted_packets": 78556856,
+        "blocked_packets": 0,
+        "counted_plus_blocked_packets": 78556856,
+        "blocked_share_of_counted_plus_blocked": 0.0,
+        "socket_dropped_run_total": null,
+        "manifest_packets_run_total": 78556856
+      },
+      "cpu": {
+        "host_source": "cpu.csv",
+        "host_busy_percent": {
+          "n": 5341,
+          "missing": 0,
+          "mean": 4.130219781389824,
+          "min": 0.0,
+          "p50": 1.0,
+          "p95": 15.841584158415841,
+          "p99": 18.109090909090977,
+          "max": 31.632653061224488,
+          "invalid_intervals": 0,
+          "weighted_mean": 4.139744059187486,
+          "numerator_ns": 220460000000,
+          "denominator_ns": 5325450000000
+        },
+        "host_softirq_percent": {
+          "n": 5341,
+          "missing": 0,
+          "mean": 3.849144680482003,
+          "min": 0.0,
+          "p50": 0.0,
+          "p95": 15.306122448979592,
+          "p99": 17.647058823529413,
+          "max": 21.49532710280374,
+          "invalid_intervals": 0,
+          "weighted_mean": 3.860706606953403,
+          "numerator_ns": 205600000000,
+          "denominator_ns": 5325450000000
+        },
+        "busiest_core_percent": {
+          "n": 5341,
+          "missing": 0,
+          "invalid_negative": 0,
+          "mean": 4.702344130312675,
+          "min": 0.0,
+          "p50": 1.96,
+          "p95": 17.65,
+          "p99": 19.61,
+          "max": 50.0
+        },
+        "process_percent_one_core": {
+          "n": 4972,
+          "missing": 0,
+          "mean": 0.36280909447210086,
+          "min": 0.24682590685687045,
+          "p50": 0.35124990012959,
+          "p95": 0.47711951128719876,
+          "p99": 0.584745816359299,
+          "max": 1.06131523234653,
+          "invalid_intervals": 0,
+          "weighted_mean": 0.36287906144119775,
+          "numerator_ns": 9688357000,
+          "denominator_ns": 2669858371415
+        }
+      },
+      "memory": {
+        "samples": 5340,
+        "bpf_maps_bytes": 257600,
+        "bpf_maps_start_bytes": 257600,
+        "bpf_maps_stable": true,
+        "main_mib": {
+          "n": 5340,
+          "missing": 0,
+          "invalid_negative": 0,
+          "mean": 6.76654377340824,
+          "min": 1.3828125,
+          "p50": 6.98046875,
+          "p95": 7.141015625000001,
+          "p99": 7.3984375,
+          "max": 7.42578125
+        },
+        "main_plus_bpf_maps_mib": {
+          "n": 5340,
+          "missing": 0,
+          "invalid_negative": 0,
+          "mean": 7.01221027731449,
+          "min": 1.62847900390625,
+          "p50": 7.22613525390625,
+          "p95": 7.386682128906251,
+          "p99": 7.64410400390625,
+          "max": 7.67144775390625
+        },
+        "current_mib": {
+          "n": 5340,
+          "missing": 0,
+          "invalid_negative": 0,
+          "mean": 7.835008485486892,
+          "min": 1.38671875,
+          "p50": 8.05078125,
+          "p95": 9.12109375,
+          "p99": 9.265625,
+          "max": 9.33203125
+        },
+        "go_heap_mib": {
+          "n": 4972,
+          "missing": 0,
+          "invalid_negative": 0,
+          "mean": 2.2692984844155593,
+          "min": 0.542083740234375,
+          "p50": 2.26739501953125,
+          "p95": 3.55439453125,
+          "p99": 3.680367279052734,
+          "max": 3.7582550048828125
+        }
+      },
+      "latency_ms": {
+        "evaluation": {
+          "n": 4971,
+          "missing": 0,
+          "invalid_negative": 0,
+          "mean": 0.21081230396298534,
+          "min": 0.000441,
+          "p50": 0.189248,
+          "p95": 0.417411,
+          "p99": 0.668422000000002,
+          "max": 2.264039
+        },
+        "queue": {
+          "n": 4971,
+          "missing": 0,
+          "invalid_negative": 0,
+          "mean": 0.0008464596660631664,
+          "min": 0.00017,
+          "p50": 0.000461,
+          "p95": 0.0019735,
+          "p99": 0.00813550000000042,
+          "max": 0.056046
+        },
+        "window_close": {
+          "n": 4971,
+          "missing": 0,
+          "invalid_negative": 0,
+          "mean": 10.5705757984309,
+          "min": 10.04775,
+          "p50": 10.524909,
+          "p95": 11.0979585,
+          "p99": 11.1904194,
+          "max": 14.886883
+        },
+        "decision": {
+          "n": 4971,
+          "missing": 0,
+          "invalid_negative": 0,
+          "mean": 10.782234562059948,
+          "min": 10.054293,
+          "p50": 10.769696,
+          "p95": 11.317985,
+          "p99": 11.571419,
+          "max": 15.259899
+        },
+        "block_update": {
+          "n": 0,
+          "missing": 4971,
+          "invalid_negative": 0,
+          "mean": null,
+          "min": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "max": null
+        },
+        "verdict_to_block_update": {
+          "n": 0,
+          "missing": 4971,
+          "invalid_negative": 0,
+          "mean": null,
+          "min": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "max": null
+        }
+      },
+      "latency_after_warmup_ms": {
+        "evaluation": {
+          "n": 4967,
+          "missing": 0,
+          "invalid_negative": 0,
+          "mean": 0.2109453021944836,
+          "min": 0.001993,
+          "p50": 0.189268,
+          "p95": 0.41744699999999996,
+          "p99": 0.6688396000000015,
+          "max": 2.264039
+        },
+        "queue": {
+          "n": 4967,
+          "missing": 0,
+          "invalid_negative": 0,
+          "mean": 0.0008468532313267565,
+          "min": 0.00017,
+          "p50": 0.000461,
+          "p95": 0.0019736999999999997,
+          "p99": 0.008227700000000336,
+          "max": 0.056046
+        },
+        "window_close": {
+          "n": 4967,
+          "missing": 0,
+          "invalid_negative": 0,
+          "mean": 10.570728925307026,
+          "min": 10.04775,
+          "p50": 10.525,
+          "p95": 11.097920799999999,
+          "p99": 11.19044412,
+          "max": 14.886883
+        },
+        "decision": {
+          "n": 4967,
+          "missing": 0,
+          "invalid_negative": 0,
+          "mean": 10.782521080732836,
+          "min": 10.054293,
+          "p50": 10.769814,
+          "p95": 11.318101,
+          "p99": 11.571490200000001,
+          "max": 15.259899
+        },
+        "block_update": {
+          "n": 0,
+          "missing": 4967,
+          "invalid_negative": 0,
+          "mean": null,
+          "min": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "max": null
+        },
+        "verdict_to_block_update": {
+          "n": 0,
+          "missing": 4967,
+          "invalid_negative": 0,
+          "mean": null,
+          "min": null,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "max": null
+        }
+      },
+      "saved_evaluation": null,
+      "warnings": [
+        "XDP attachment mode is a directory label, not verified manifest metadata.",
+        "Run used a modified source tree; commit alone does not identify the build."
+      ],
+      "high_rate_phase": {
+        "elapsed_seconds": [
+          850,
+          1575
+        ],
+        "selection": "sample endpoints within the interval; not reference-clock aligned",
+        "host_cpu": {
+          "n": 1450,
+          "missing": 0,
+          "mean": 13.42435617463948,
+          "min": 0.0,
+          "p50": 13.72549019607843,
+          "p95": 17.821782178217823,
+          "p99": 20.0,
+          "max": 22.429906542056074,
+          "invalid_intervals": 0,
+          "weighted_mean": 13.443365293683172,
+          "numerator_ns": 194750000000,
+          "denominator_ns": 1448670000000
+        }
+      },
+      "source_hashes": {
+        "cpu.csv": "7414162c4c0cfffbd623e5e0eef1d8bee77ae05c3ecb291ade97d3765d107fba",
+        "memory.csv": "e5992254aff91d0c9f4ef5c68d48ccee1fc5f9daefbd9dcdd8dbcbba65888a6c",
+        "run.json": "ec2e2c04da1d34f6f30b8a3a6a75f3889f3eb2c43658f7b0be4b5e3e65275cc9",
+        "windows.csv": "f1e101c40cc8272480d75e32981aed2f8ecc679f4de1c10dc6f7ca296107599d"
+      }
+    },
+    {
+      "name": "usr-per-gen-1",
+      "path": "C:/Dane/Studia/SEM_2/eBPF-DDoS-Detection/results/data-from-tests/usr-per-gen-1",
+      "variant": "userspace",
+      "source": "live",
+      "blocking": true,
+      "attachment_label": "generic",
+      "window_length_ns": 536870912,
+      "observed_window_lengths_ns": [
+        536870912
+      ],
+      "config": {
+        "window_length": "536.870912ms",
+        "max_empty": 0,
+        "counts": "heavykeeper",
+        "mode": "combined",
+        "hk_depth": 4,
+        "hk_width": 1024,
+        "hk_decay_base": 1.08,
+        "k": 10,
+        "seed": 42,
+        "cms_width": 1024,
+        "cms_depth": 4,
+        "iqr_base_threshold": 200,
+        "iqr_multiplier": 1.5,
+        "iqr_offset_multiplier": 2,
+        "iqr_min_samples": 4,
+        "iqr_max_history": 500,
+        "iqr_max_tracked_ips": 1000,
+        "iqr_ip_mode": "hybrid",
+        "iqr_max_shared_history": 5000,
+        "block": true,
+        "block_ttl": "1m0s",
+        "block_capacity": 1000
+      },
+      "version": {
+        "commit": "5793cd563993e5d36812a806844d46bf1b7c3ce9",
+        "modified": true,
+        "go": "go1.25.4"
+      },
+      "end_reason": "interrupted",
+      "started_at": "2026-10-22T15:07:35.616342724Z",
+      "finished_at": "2026-10-22T15:52:06.013780278Z",
+      "coverage": {
+        "windows": 4969,
+        "evaluated_windows": 4968,
+        "after_warmup_windows": 4964,
+        "warmup_unknown_windows": 0,
+        "window_span_seconds": 2667.711561728,
+        "window_duration_seconds": 2667.711561728
+      },
+      "traffic": {
+        "counted_packets": 719065,
+        "blocked_packets": 77833742,
+        "counted_plus_blocked_packets": 78552807,
+        "blocked_share_of_counted_plus_blocked": 0.9908460941440324,
+        "socket_dropped_run_total": 2629,
+        "manifest_packets_run_total": 719065
+      },
+      "cpu": {
+        "host_source": "cpu.csv",
+        "host_busy_percent": {
+          "n": 5342,
+          "missing": 0,
+          "mean": 0.5479781450469857,
+          "min": 0.0,
+          "p50": 0.0,
+          "p95": 2.197802197802198,
+          "p99": 3.3707865168539324,
+          "max": 54.63917525773196,
+          "invalid_intervals": 0,
+          "weighted_mean": 0.5178232481183243,
+          "numerator_ns": 26790000000,
+          "denominator_ns": 5173580000000
+        },
+        "host_softirq_percent": {
+          "n": 5342,
+          "missing": 0,
+          "mean": 0.2790913208435848,
+          "min": 0.0,
+          "p50": 0.0,
+          "p95": 1.1363636363636365,
+          "p99": 2.247191011235955,
+          "max": 29.896907216494846,
+          "invalid_intervals": 0,
+          "weighted_mean": 0.26384051275905657,
+          "numerator_ns": 13650000000,
+          "denominator_ns": 5173580000000
+        },
+        "busiest_core_percent": {
+          "n": 5342,
+          "missing": 0,
+          "invalid_negative": 0,
+          "mean": 0.8516566828903033,
+          "min": 0.0,
+          "p50": 0.0,
+          "p95": 2.33,
+          "p99": 4.55,
+          "max": 67.35
+        },
+        "process_percent_one_core": {
+          "n": 4969,
+          "missing": 0,
+          "mean": 0.3422519712888615,
+          "min": 0.044524362674034486,
+          "p50": 0.14158920883061343,
+          "p95": 0.37062639259136765,
+          "p99": 1.3138373312801033,
+          "max": 75.92524596974738,
+          "invalid_intervals": 0,
+          "weighted_mean": 0.3392335756052488,
+          "numerator_ns": 9057188000,
+          "denominator_ns": 2669897277662
+        }
+      },
+      "memory": {
+        "samples": 5341,
+        "bpf_maps_bytes": 121832,
+        "bpf_maps_start_bytes": 121832,
+        "bpf_maps_stable": true,
+        "main_mib": {
+          "n": 5341,
+          "missing": 0,
+          "invalid_negative": 0,
+          "mean": 6.842496430911814,
+          "min": 0.9921875,
+          "p50": 7.0859375,
+          "p95": 7.1796875,
+          "p99": 7.41015625,
+          "max": 7.421875
+        },
+        "main_plus_bpf_maps_mib": {
+          "n": 5341,
+          "missing": 0,
+          "invalid_negative": 0,
+          "mean": 6.958684480228221,
+          "min": 1.1083755493164062,
+          "p50": 7.202125549316406,
+          "p95": 7.295875549316406,
+          "p99": 7.526344299316406,
+          "max": 7.538063049316406
+        },
+        "current_mib": {
+          "n": 5341,
+          "missing": 0,
+          "invalid_negative": 0,
+          "mean": 7.791929472477064,
+          "min": 1.24609375,
+          "p50": 8.046875,
+          "p95": 8.86328125,
+          "p99": 9.08984375,
+          "max": 9.23046875
+        },
+        "go_heap_mib": {
+          "n": 4969,
+          "missing": 0,
+          "invalid_negative": 0,
+          "mean": 2.434905557523049,
+          "min": 0.82879638671875,
+          "p50": 2.4335784912109375,
+          "p95": 3.620219421386719,
+          "p99": 3.753589172363281,
+          "max": 3.8221054077148438
+        }
+      },
+      "latency_ms": {
+        "evaluation": {
+          "n": 4968,
+          "missing": 0,
+          "invalid_negative": 0,
+          "mean": 0.17865444484702095,
+          "min": 0.002665,
+          "p50": 0.162673,
+          "p95": 0.35097899999999993,
+          "p99": 0.49938323999999973,
+          "max": 2.31077
+        },
+        "queue": {
+          "n": 4968,
+          "missing": 0,
+          "invalid_negative": 0,
+          "mean": 0.0014165318035426731,
+          "min": 0.00022,
+          "p50": 0.000652,
+          "p95": 0.0037634999999999964,
+          "p99": 0.017702299999999983,
+          "max": 0.114958
+        },
+        "window_close": {
+          "n": 4968,
+          "missing": 0,
+          "invalid_negative": 0,
+          "mean": 10.191399540056361,
+          "min": 0.022122,
+          "p50": 10.513106,
+          "p95": 11.03924215,
+          "p99": 11.09357606,
+          "max": 15.763841
+        },
+        "decision": {
+          "n": 4968,
+          "missing": 0,
+          "invalid_negative": 0,
+          "mean": 10.371470516706925,
+          "min": 0.138521,
+          "p50": 10.6873505,
+          "p95": 11.224203000000001,
+          "p99": 11.39613941,
+          "max": 15.944644
+        },
+        "block_update": {
+          "n": 70,
+          "missing": 4898,
+          "invalid_negative": 0,
+          "mean": 6.330453657142857,
+          "min": 0.192227,
+          "p50": 10.218261,
+          "p95": 11.2042038,
+          "p99": 11.33589186,
+          "max": 11.397099
+        },
+        "verdict_to_block_update": {
+          "n": 70,
+          "missing": 4898,
+          "invalid_negative": 0,
+          "mean": 0.0305765,
+          "min": 0.003446,
+          "p50": 0.018505,
+          "p95": 0.10648345,
+          "p99": 0.1409682000000001,
+          "max": 0.169893
+        }
+      },
+      "latency_after_warmup_ms": {
+        "evaluation": {
+          "n": 4964,
+          "missing": 0,
+          "invalid_negative": 0,
+          "mean": 0.17877241720386786,
+          "min": 0.003286,
+          "p50": 0.162773,
+          "p95": 0.3510109999999999,
+          "p99": 0.4995443599999996,
+          "max": 2.31077
+        },
+        "queue": {
+          "n": 4964,
+          "missing": 0,
+          "invalid_negative": 0,
+          "mean": 0.001416948428686543,
+          "min": 0.00022,
+          "p50": 0.000652,
+          "p95": 0.0037654999999999945,
+          "p99": 0.01771069999999998,
+          "max": 0.114958
+        },
+        "window_close": {
+          "n": 4964,
+          "missing": 0,
+          "invalid_negative": 0,
+          "mean": 10.191247025181305,
+          "min": 0.022122,
+          "p50": 10.5134425,
+          "p95": 11.03926435,
+          "p99": 11.093591340000001,
+          "max": 15.763841
+        },
+        "decision": {
+          "n": 4964,
+          "missing": 0,
+          "invalid_negative": 0,
+          "mean": 10.37143639081386,
+          "min": 0.138521,
+          "p50": 10.6877975,
+          "p95": 11.224235,
+          "p99": 11.39615449,
+          "max": 15.944644
+        },
+        "block_update": {
+          "n": 70,
+          "missing": 4894,
+          "invalid_negative": 0,
+          "mean": 6.330453657142857,
+          "min": 0.192227,
+          "p50": 10.218261,
+          "p95": 11.2042038,
+          "p99": 11.33589186,
+          "max": 11.397099
+        },
+        "verdict_to_block_update": {
+          "n": 70,
+          "missing": 4894,
+          "invalid_negative": 0,
+          "mean": 0.0305765,
+          "min": 0.003446,
+          "p50": 0.018505,
+          "p95": 0.10648345,
+          "p99": 0.1409682000000001,
+          "max": 0.169893
+        }
+      },
+      "saved_evaluation": null,
+      "warnings": [
+        "XDP attachment mode is a directory label, not verified manifest metadata.",
+        "Run used a modified source tree; commit alone does not identify the build."
+      ],
+      "high_rate_phase": {
+        "elapsed_seconds": [
+          850,
+          1575
+        ],
+        "selection": "sample endpoints within the interval; not reference-clock aligned",
+        "host_cpu": {
+          "n": 1450,
+          "missing": 0,
+          "mean": 1.5097685328626025,
+          "min": 0.0,
+          "p50": 1.1111111111111112,
+          "p95": 3.1914893617021276,
+          "p99": 15.64469413233458,
+          "max": 54.63917525773196,
+          "invalid_intervals": 0,
+          "weighted_mean": 1.5271684103948702,
+          "numerator_ns": 19910000000,
+          "denominator_ns": 1303720000000
+        }
+      },
+      "source_hashes": {
+        "cpu.csv": "99ee83648e52a989f53c617908394f1557a07cb1ff9dd86881ff848fd11e0e81",
+        "memory.csv": "27fa02760d01fe68cb402147524153ba850a408a6674e89285c49f2eb16e2c84",
+        "run.json": "ccd59187807968ce6415aae35664982e7cb6358d06f66ae6c333d1286283f5d7",
+        "windows.csv": "cdbdd80ab75f7e444b05e93f5deb37c75ac615fe204bbe09dbf6301670ff2c9a"
+      }
+    },
+    {
+      "name": "ker-per-gen-1",
+      "path": "C:/Dane/Studia/SEM_2/eBPF-DDoS-Detection/results/data-from-tests/ker-per-gen-1",
+      "variant": "kernel",
+      "source": "xdp",
+      "blocking": true,
+      "attachment_label": "generic",
+      "window_length_ns": 536870912,
+      "observed_window_lengths_ns": [
+        536870912
+      ],
+      "config": {
+        "window_length": "536.870912ms",
+        "mode": "combined",
+        "hk_depth": 4,
+        "hk_width": 1024,
+        "hk_topk": 10,
+        "k": 10,
+        "iqr_base_threshold": 200,
+        "iqr_multiplier": 1.5,
+        "iqr_offset_multiplier": 2,
+        "iqr_min_samples": 4,
+        "iqr_max_history": 500,
+        "iqr_max_tracked_ips": 1000,
+        "iqr_ip_mode": "hybrid",
+        "iqr_max_shared_history": 5000,
+        "block": true,
+        "block_ttl": "1m0s",
+        "block_capacity": 1000
+      },
+      "version": {
+        "commit": "73fe3a2c2cf218165dbe9b8a7cba10466b0369ae",
+        "modified": true,
+        "go": "go1.25.4"
+      },
+      "end_reason": "interrupted",
+      "started_at": "2026-10-22T15:54:51.283251043Z",
+      "finished_at": "2026-10-22T16:39:25.273802397Z",
+      "coverage": {
+        "windows": 4980,
+        "evaluated_windows": 4979,
+        "after_warmup_windows": 4975,
+        "warmup_unknown_windows": 0,
+        "window_span_seconds": 2673.61714176,
+        "window_duration_seconds": 2673.61714176
+      },
+      "traffic": {
+        "counted_packets": 717025,
+        "blocked_packets": 77841638,
+        "counted_plus_blocked_packets": 78558663,
+        "blocked_share_of_counted_plus_blocked": 0.9908727443592058,
+        "socket_dropped_run_total": null,
+        "manifest_packets_run_total": 717025
+      },
+      "cpu": {
+        "host_source": "cpu.csv",
+        "host_busy_percent": {
+          "n": 5349,
+          "missing": 0,
+          "mean": 0.5922022289263228,
+          "min": 0.0,
+          "p50": 0.0,
+          "p95": 2.197802197802198,
+          "p99": 3.2967032967032965,
+          "max": 25.0,
+          "invalid_intervals": 0,
+          "weighted_mean": 0.5754499068163503,
+          "numerator_ns": 29920000000,
+          "denominator_ns": 5199410000000
+        },
+        "host_softirq_percent": {
+          "n": 5349,
+          "missing": 0,
+          "mean": 0.23383370377792043,
+          "min": 0.0,
+          "p50": 0.0,
+          "p95": 1.1111111111111112,
+          "p99": 2.210500610500599,
+          "max": 14.0,
+          "invalid_intervals": 0,
+          "weighted_mean": 0.22310223659992193,
+          "numerator_ns": 11600000000,
+          "denominator_ns": 5199410000000
+        },
+        "busiest_core_percent": {
+          "n": 5349,
+          "missing": 0,
+          "invalid_negative": 0,
+          "mean": 0.9835184146569452,
+          "min": 0.0,
+          "p50": 0.0,
+          "p95": 3.92,
+          "p99": 4.44,
+          "max": 28.57
+        },
+        "process_percent_one_core": {
+          "n": 4980,
+          "missing": 0,
+          "mean": 0.3530725059148357,
+          "min": 0.24887424084321813,
+          "p50": 0.34244046369127845,
+          "p95": 0.45677228766224826,
+          "p99": 0.5581299153932204,
+          "max": 1.6036017108090979,
+          "invalid_intervals": 0,
+          "weighted_mean": 0.35312264265413573,
+          "numerator_ns": 9441584000,
+          "denominator_ns": 2673740751665
+        }
+      },
+      "memory": {
+        "samples": 5348,
+        "bpf_maps_bytes": 257600,
+        "bpf_maps_start_bytes": 257600,
+        "bpf_maps_stable": true,
+        "main_mib": {
+          "n": 5348,
+          "missing": 0,
+          "invalid_negative": 0,
+          "mean": 6.725480757993642,
+          "min": 1.38671875,
+          "p50": 7.01171875,
+          "p95": 7.06640625,
+          "p99": 7.25,
+          "max": 7.42578125
+        },
+        "main_plus_bpf_maps_mib": {
+          "n": 5348,
+          "missing": 0,
+          "invalid_negative": 0,
+          "mean": 6.971147261899892,
+          "min": 1.63238525390625,
+          "p50": 7.25738525390625,
+          "p95": 7.31207275390625,
+          "p99": 7.49566650390625,
+          "max": 7.67144775390625
+        },
+        "current_mib": {
+          "n": 5348,
+          "missing": 0,
+          "invalid_negative": 0,
+          "mean": 7.676382380095363,
+          "min": 1.38671875,
+          "p50": 7.97265625,
+          "p95": 8.8125,
+          "p99": 8.87890625,
+          "max": 8.87890625
+        },
+        "go_heap_mib": {
+          "n": 4980,
+          "missing": 0,
+          "invalid_negative": 0,
+          "mean": 2.2747188797916276,
+          "min": 0.5499191284179688,
+          "p50": 2.272510528564453,
+          "p95": 3.55753288269043,
+          "p99": 3.7047998809814455,
+          "max": 3.7864303588867188
+        }
+      },
+      "latency_ms": {
+        "evaluation": {
+          "n": 4979,
+          "missing": 0,
+          "invalid_negative": 0,
+          "mean": 0.18711464109258885,
+          "min": 0.001052,
+          "p50": 0.171124,
+          "p95": 0.36956199999999995,
+          "p99": 0.5391191000000004,
+          "max": 3.646661
+        },
+        "queue": {
+          "n": 4979,
+          "missing": 0,
+          "invalid_negative": 0,
+          "mean": 0.0005807262502510544,
+          "min": 0.00018,
+          "p50": 0.00031,
+          "p95": 0.001613,
+          "p99": 0.003290200000000028,
+          "max": 0.067559
+        },
+        "window_close": {
+          "n": 4979,
+          "missing": 0,
+          "invalid_negative": 0,
+          "mean": 10.553070662783693,
+          "min": 10.043261,
+          "p50": 10.489016,
+          "p95": 11.0988574,
+          "p99": 11.180500660000002,
+          "max": 22.332327
+        },
+        "decision": {
+          "n": 4979,
+          "missing": 0,
+          "invalid_negative": 0,
+          "mean": 10.740766030126531,
+          "min": 10.061011,
+          "p50": 10.700606,
+          "p95": 11.2865804,
+          "p99": 11.48626212,
+          "max": 22.741894
+        },
+        "block_update": {
+          "n": 74,
+          "missing": 4905,
+          "invalid_negative": 0,
+          "mean": 10.828977716216215,
+          "min": 10.276184,
+          "p50": 10.7886235,
+          "p95": 11.34934415,
+          "p99": 11.497345239999998,
+          "max": 11.654231
+        },
+        "verdict_to_block_update": {
+          "n": 74,
+          "missing": 4905,
+          "invalid_negative": 0,
+          "mean": 0.018203824324324325,
+          "min": 0.002315,
+          "p50": 0.0140365,
+          "p95": 0.06457374999999999,
+          "p99": 0.07431808999999996,
+          "max": 0.081083
+        }
+      },
+      "latency_after_warmup_ms": {
+        "evaluation": {
+          "n": 4975,
+          "missing": 0,
+          "invalid_negative": 0,
+          "mean": 0.1872501903517588,
+          "min": 0.002404,
+          "p50": 0.171275,
+          "p95": 0.369586,
+          "p99": 0.5391953000000004,
+          "max": 3.646661
+        },
+        "queue": {
+          "n": 4975,
+          "missing": 0,
+          "invalid_negative": 0,
+          "mean": 0.0005808229145728643,
+          "min": 0.00018,
+          "p50": 0.00031,
+          "p95": 0.001613,
+          "p99": 0.003294600000000024,
+          "max": 0.067559
+        },
+        "window_close": {
+          "n": 4975,
+          "missing": 0,
+          "invalid_negative": 0,
+          "mean": 10.553057860502513,
+          "min": 10.043261,
+          "p50": 10.489016,
+          "p95": 11.0988722,
+          "p99": 11.180526780000001,
+          "max": 22.332327
+        },
+        "decision": {
+          "n": 4975,
+          "missing": 0,
+          "invalid_negative": 0,
+          "mean": 10.740888873768844,
+          "min": 10.061011,
+          "p50": 10.700606,
+          "p95": 11.2865872,
+          "p99": 11.48627196,
+          "max": 22.741894
+        },
+        "block_update": {
+          "n": 74,
+          "missing": 4901,
+          "invalid_negative": 0,
+          "mean": 10.828977716216215,
+          "min": 10.276184,
+          "p50": 10.7886235,
+          "p95": 11.34934415,
+          "p99": 11.497345239999998,
+          "max": 11.654231
+        },
+        "verdict_to_block_update": {
+          "n": 74,
+          "missing": 4901,
+          "invalid_negative": 0,
+          "mean": 0.018203824324324325,
+          "min": 0.002315,
+          "p50": 0.0140365,
+          "p95": 0.06457374999999999,
+          "p99": 0.07431808999999996,
+          "max": 0.081083
+        }
+      },
+      "saved_evaluation": null,
+      "warnings": [
+        "XDP attachment mode is a directory label, not verified manifest metadata.",
+        "Run used a modified source tree; commit alone does not identify the build."
+      ],
+      "high_rate_phase": {
+        "elapsed_seconds": [
+          850,
+          1575
+        ],
+        "selection": "sample endpoints within the interval; not reference-clock aligned",
+        "host_cpu": {
+          "n": 1450,
+          "missing": 0,
+          "mean": 1.3100039983062868,
+          "min": 0.0,
+          "p50": 1.098901098901099,
+          "p95": 3.225806451612903,
+          "p99": 6.417982155113245,
+          "max": 15.0,
+          "invalid_intervals": 0,
+          "weighted_mean": 1.321542506838831,
+          "numerator_ns": 17440000000,
+          "denominator_ns": 1319670000000
+        }
+      },
+      "source_hashes": {
+        "cpu.csv": "34125d2a0dd24d62b3726954c0d897c1421b7b8a5b9bfb519b2608fe08a433d6",
+        "memory.csv": "0960003b7bfab5ddf01f7be25fd709528c83cc4406d0002587705e7046f8106b",
+        "run.json": "6d833f49d42fd027024407dd058da2ff065d5aaff002e85997298f4ed9c8704a",
+        "windows.csv": "ac095d604a899c4fddfac69cbe0400e7cb5267a4d3204e19638a376643a58dde"
+      }
+    }
+  ],
+  "evaluations": {
+    "usr-acc-gen-1": {
+      "counts": {
+        "windows_total": 5257,
+        "excluded_before_excerpt": 4,
+        "excluded_after_excerpt": 785,
+        "excluded_not_evaluated": 0,
+        "excluded_warmup": 75,
+        "windows_scored": 4393,
+        "attack_window_share": 0.9469610744366037,
+        "attack_intervals": 22861,
+        "offset_ns": 248998745516838336,
+        "mode": "combined",
+        "window_length_ns": 536870912,
+        "span_ns": 1073741824,
+        "warmup": 75
+      },
+      "scores": {
+        "window": {
+          "TP": 2685,
+          "FP": 5,
+          "TN": 228,
+          "FN": 1475,
+          "accuracy": 0.6631003869792852,
+          "precision": 0.9981412639405205,
+          "recall": 0.6454326923076923,
+          "f1": 0.7839416058394161,
+          "fpr": 0.02145922746781116,
+          "attacks_total": 12,
+          "attacks_detected": 2,
+          "attacks_not_covered": 10
+        },
+        "window_or_ip": {
+          "TP": 2685,
+          "FP": 5,
+          "TN": 228,
+          "FN": 1475,
+          "accuracy": 0.6631003869792852,
+          "precision": 0.9981412639405205,
+          "recall": 0.6454326923076923,
+          "f1": 0.7839416058394161,
+          "fpr": 0.02145922746781116,
+          "attacks_total": 12,
+          "attacks_detected": 2,
+          "attacks_not_covered": 10
+        }
+      },
+      "warnings": [
+        "the capture socket dropped 104156 packets",
+        "the interface dropped 3251 packets",
+        "correlation 0.744 at the best offset is below 0.9; the live run and the reference may not show the same traffic",
+        "the best offset is only 1.00 times the next candidate (want >= 1.2); the alignment is ambiguous, for example with very even traffic"
+      ],
+      "run": {
+        "variant": "userspace",
+        "source": "live",
+        "live": true,
+        "run_dir": "results/usr-acc-gen-1",
+        "window_length_ns": 536870912,
+        "mode": "combined",
+        "offset": {
+          "offset_ns": 248998745516838336,
+          "method": "cross-correlation",
+          "correlation": 0.7443848749673698,
+          "peak_ratio": 1.00265034506136,
+          "coarse_step_ns": 10000000,
+          "fine_step_ns": 1000000,
+          "warnings": [
+            "correlation 0.744 at the best offset is below 0.9; the live run and the reference may not show the same traffic",
+            "the best offset is only 1.00 times the next candidate (want >= 1.2); the alignment is ambiguous, for example with very even traffic"
+          ]
+        },
+        "reference": "results/ref-pcap",
+        "excerpt": {
+          "file": "/mnt/attack_data/DAT300-data/CICDDoS2019/excerpts/01-12.pcap",
+          "trace_start": "2018-12-01T14:21:52.153161000Z",
+          "trace_end": "2018-12-01T15:01:51.999846000Z",
+          "packets_ip": 78567754,
+          "max_gap_s": 0.000331
+        },
+        "tcpreplay": null,
+        "replay_timing": null,
+        "losses": {
+          "sent_tcpreplay": null,
+          "tcpreplay_failed": null,
+          "nic_rx_packets": 78560305,
+          "nic_rx_dropped": 3251,
+          "socket_offered": 78560305,
+          "socket_dropped": 104156,
+          "detector_packets": 78455744,
+          "excerpt_packets_ip": 78567754,
+          "window_packets_observed": 77879809,
+          "window_packets_expected": 78566942,
+          "window_loss": 0.008745830872119997
+        },
+        "warnings": [
+          "the capture socket dropped 104156 packets",
+          "the interface dropped 3251 packets",
+          "correlation 0.744 at the best offset is below 0.9; the live run and the reference may not show the same traffic",
+          "the best offset is only 1.00 times the next candidate (want >= 1.2); the alignment is ambiguous, for example with very even traffic"
+        ]
+      }
+    },
+    "ker-acc-gen-1": {
+      "counts": {
+        "windows_total": 5028,
+        "excluded_before_excerpt": 10,
+        "excluded_after_excerpt": 550,
+        "excluded_not_evaluated": 0,
+        "excluded_warmup": 75,
+        "windows_scored": 4393,
+        "attack_window_share": 0.9469610744366037,
+        "attack_intervals": 22861,
+        "offset_ns": 249004037984063360,
+        "mode": "combined",
+        "window_length_ns": 536870912,
+        "span_ns": 1073741824,
+        "warmup": 75
+      },
+      "scores": {
+        "window": {
+          "TP": 2677,
+          "FP": 7,
+          "TN": 226,
+          "FN": 1483,
+          "accuracy": 0.6608240382426588,
+          "precision": 0.9973919523099851,
+          "recall": 0.6435096153846154,
+          "f1": 0.7822910578609,
+          "fpr": 0.030042918454935622,
+          "attacks_total": 12,
+          "attacks_detected": 2,
+          "attacks_not_covered": 10
+        },
+        "window_or_ip": {
+          "TP": 2679,
+          "FP": 7,
+          "TN": 226,
+          "FN": 1481,
+          "accuracy": 0.661279307989984,
+          "precision": 0.9973938942665674,
+          "recall": 0.6439903846153846,
+          "f1": 0.782646801051709,
+          "fpr": 0.030042918454935622,
+          "attacks_total": 12,
+          "attacks_detected": 2,
+          "attacks_not_covered": 10
+        }
+      },
+      "warnings": [
+        "the interface dropped 9689 packets",
+        "correlation 0.738 at the best offset is below 0.9; the live run and the reference may not show the same traffic",
+        "the best offset is only 1.00 times the next candidate (want >= 1.2); the alignment is ambiguous, for example with very even traffic"
+      ],
+      "run": {
+        "variant": "kernel",
+        "source": "xdp",
+        "live": true,
+        "run_dir": "results/ker-acc-gen-1",
+        "window_length_ns": 536870912,
+        "mode": "combined",
+        "offset": {
+          "offset_ns": 249004037984063360,
+          "method": "cross-correlation",
+          "correlation": 0.7384216000097793,
+          "peak_ratio": 1.00098043179585,
+          "coarse_step_ns": 10000000,
+          "fine_step_ns": 1000000,
+          "warnings": [
+            "correlation 0.738 at the best offset is below 0.9; the live run and the reference may not show the same traffic",
+            "the best offset is only 1.00 times the next candidate (want >= 1.2); the alignment is ambiguous, for example with very even traffic"
+          ]
+        },
+        "reference": "results/ref-pcap",
+        "excerpt": {
+          "file": "/mnt/attack_data/DAT300-data/CICDDoS2019/excerpts/01-12.pcap",
+          "trace_start": "2018-12-01T14:21:52.153161000Z",
+          "trace_end": "2018-12-01T15:01:51.999846000Z",
+          "packets_ip": 78567754,
+          "max_gap_s": 0.000331
+        },
+        "tcpreplay": null,
+        "replay_timing": null,
+        "losses": {
+          "sent_tcpreplay": null,
+          "tcpreplay_failed": null,
+          "nic_rx_packets": 78553867,
+          "nic_rx_dropped": 9689,
+          "socket_offered": null,
+          "socket_dropped": null,
+          "detector_packets": 78553462,
+          "excerpt_packets_ip": 78567754,
+          "window_packets_observed": 77976069,
+          "window_packets_expected": 78566956,
+          "window_loss": 0.007520806781170952
+        },
+        "warnings": [
+          "the interface dropped 9689 packets",
+          "correlation 0.738 at the best offset is below 0.9; the live run and the reference may not show the same traffic",
+          "the best offset is only 1.00 times the next candidate (want >= 1.2); the alignment is ambiguous, for example with very even traffic"
+        ]
+      }
+    }
+  },
+  "throughput": [
+    {
+      "name": "ker-per-gen-1",
+      "path": "C:\\Dane\\Studia\\SEM_2\\eBPF-DDoS-Detection\\results\\data-from-tests\\ker-per-gen-1",
+      "source": "xdp",
+      "blocking": true,
+      "end_reason": "interrupted",
+      "version": {
+        "commit": "73fe3a2c2cf218165dbe9b8a7cba10466b0369ae",
+        "modified": true,
+        "go": "go1.25.4"
+      },
+      "config": {
+        "window_length": "536.870912ms",
+        "mode": "combined",
+        "hk_depth": 4,
+        "hk_width": 1024,
+        "hk_topk": 10,
+        "k": 10,
+        "iqr_base_threshold": 200,
+        "iqr_multiplier": 1.5,
+        "iqr_offset_multiplier": 2,
+        "iqr_min_samples": 4,
+        "iqr_max_history": 500,
+        "iqr_max_tracked_ips": 1000,
+        "iqr_ip_mode": "hybrid",
+        "iqr_max_shared_history": 5000,
+        "block": true,
+        "block_ttl": "1m0s",
+        "block_capacity": 1000
+      },
+      "source_sha256": {
+        "run.json": "6d833f49d42fd027024407dd058da2ff065d5aaff002e85997298f4ed9c8704a",
+        "windows.csv": "ac095d604a899c4fddfac69cbe0400e7cb5267a4d3204e19638a376643a58dde"
+      },
+      "windows": 4980,
+      "window_s": 0.536870912,
+      "recorded_duration_s": 2673.61714176,
+      "contiguous": true,
+      "counted_packets": 717025,
+      "counted_bytes": 328696336,
+      "blocked_packets": 77841638,
+      "blocked_bytes": 37318034228,
+      "socket_drops": null,
+      "socket_drop_percent_of_offered": null,
+      "late_packets_outside_counted_windows": null,
+      "discarded_final_partial_packets": 0,
+      "manifest_packet_reconciliation_residual": 0,
+      "counted_mean_pps": 268.1853691018729,
+      "counted_mean_Mbps": 0.9835255193901828,
+      "blocked_mean_pps": 29114.728800982357,
+      "blocked_mean_Mbps": 111.6630609375406,
+      "accounted_mean_pps": 29382.91417008423,
+      "counted_peak_window_pps": 132322.3114013672,
+      "counted_peak_window_Mbps": 508.10408592224115,
+      "accounted_peak_window_pps": 144690.27519226074,
+      "best_counted_sustained_interval": {
+        "start_elapsed_s": 857.382846464,
+        "end_elapsed_s": 917.512388608,
+        "duration_s": 60.129542144,
+        "selection_packets": 74490,
+        "selection_pps": 1238.8253318411964,
+        "counted_pps": 1238.8253318411964,
+        "counted_Mbps": 4.709059106452124,
+        "blocked_pps": 128336.71644330025,
+        "accounted_pps": 129575.54177514145
+      },
+      "best_accounted_sustained_interval": {
+        "start_elapsed_s": 856.845975552,
+        "end_elapsed_s": 916.975517696,
+        "duration_s": 60.129542144,
+        "selection_packets": 7815025,
+        "selection_pps": 129969.80720864875,
+        "counted_pps": 1216.7396822146006,
+        "counted_Mbps": 4.6242241348539075,
+        "blocked_pps": 128753.06752643416,
+        "accounted_pps": 129969.80720864875
+      }
+    },
+    {
+      "name": "ker-per-gen-3",
+      "path": "C:\\Dane\\Studia\\SEM_2\\eBPF-DDoS-Detection\\results\\data-from-tests\\ker-per-gen-3",
+      "source": "xdp",
+      "blocking": false,
+      "end_reason": "duration_reached",
+      "version": {
+        "commit": "3e8e5250a78027f39f2c4a7b39f643db9c3da744",
+        "modified": true,
+        "go": "go1.25.4"
+      },
+      "config": {
+        "window_length": "536.870912ms",
+        "mode": "combined",
+        "hk_depth": 4,
+        "hk_width": 1024,
+        "hk_topk": 10,
+        "k": 10,
+        "iqr_base_threshold": 200,
+        "iqr_multiplier": 1.5,
+        "iqr_offset_multiplier": 2,
+        "iqr_min_samples": 4,
+        "iqr_max_history": 500,
+        "iqr_max_tracked_ips": 1000,
+        "iqr_ip_mode": "hybrid",
+        "iqr_max_shared_history": 5000,
+        "block": false
+      },
+      "source_sha256": {
+        "run.json": "ec2e2c04da1d34f6f30b8a3a6a75f3889f3eb2c43658f7b0be4b5e3e65275cc9",
+        "windows.csv": "f1e101c40cc8272480d75e32981aed2f8ecc679f4de1c10dc6f7ca296107599d"
+      },
+      "windows": 4972,
+      "window_s": 0.536870912,
+      "recorded_duration_s": 2669.322174464,
+      "contiguous": true,
+      "counted_packets": 78556856,
+      "counted_bytes": 37645866554,
+      "blocked_packets": 0,
+      "blocked_bytes": 0,
+      "socket_drops": null,
+      "socket_drop_percent_of_offered": null,
+      "late_packets_outside_counted_windows": null,
+      "discarded_final_partial_packets": 0,
+      "manifest_packet_reconciliation_residual": 0,
+      "counted_mean_pps": 29429.51463540523,
+      "counted_mean_Mbps": 112.8252465412776,
+      "blocked_mean_pps": 0.0,
+      "blocked_mean_Mbps": 0.0,
+      "accounted_mean_pps": 29429.51463540523,
+      "counted_peak_window_pps": 142911.44907474518,
+      "counted_peak_window_Mbps": 549.7515201568604,
+      "accounted_peak_window_pps": 142911.44907474518,
+      "best_counted_sustained_interval": {
+        "start_elapsed_s": 856.30910464,
+        "end_elapsed_s": 916.438646784,
+        "duration_s": 60.129542144,
+        "selection_packets": 7794796,
+        "selection_pps": 129633.38355932917,
+        "counted_pps": 129633.38355932917,
+        "counted_Mbps": 497.90463237357994,
+        "blocked_pps": 0.0,
+        "accounted_pps": 129633.38355932917
+      },
+      "best_accounted_sustained_interval": {
+        "start_elapsed_s": 856.30910464,
+        "end_elapsed_s": 916.438646784,
+        "duration_s": 60.129542144,
+        "selection_packets": 7794796,
+        "selection_pps": 129633.38355932917,
+        "counted_pps": 129633.38355932917,
+        "counted_Mbps": 497.90463237357994,
+        "blocked_pps": 0.0,
+        "accounted_pps": 129633.38355932917
+      }
+    },
+    {
+      "name": "usr-per-gen-1",
+      "path": "C:\\Dane\\Studia\\SEM_2\\eBPF-DDoS-Detection\\results\\data-from-tests\\usr-per-gen-1",
+      "source": "live",
+      "blocking": true,
+      "end_reason": "interrupted",
+      "version": {
+        "commit": "5793cd563993e5d36812a806844d46bf1b7c3ce9",
+        "modified": true,
+        "go": "go1.25.4"
+      },
+      "config": {
+        "window_length": "536.870912ms",
+        "max_empty": 0,
+        "counts": "heavykeeper",
+        "mode": "combined",
+        "hk_depth": 4,
+        "hk_width": 1024,
+        "hk_decay_base": 1.08,
+        "k": 10,
+        "seed": 42,
+        "cms_width": 1024,
+        "cms_depth": 4,
+        "iqr_base_threshold": 200,
+        "iqr_multiplier": 1.5,
+        "iqr_offset_multiplier": 2,
+        "iqr_min_samples": 4,
+        "iqr_max_history": 500,
+        "iqr_max_tracked_ips": 1000,
+        "iqr_ip_mode": "hybrid",
+        "iqr_max_shared_history": 5000,
+        "block": true,
+        "block_ttl": "1m0s",
+        "block_capacity": 1000
+      },
+      "source_sha256": {
+        "run.json": "ccd59187807968ce6415aae35664982e7cb6358d06f66ae6c333d1286283f5d7",
+        "windows.csv": "cdbdd80ab75f7e444b05e93f5deb37c75ac615fe204bbe09dbf6301670ff2c9a"
+      },
+      "windows": 4969,
+      "window_s": 0.536870912,
+      "recorded_duration_s": 2667.711561728,
+      "contiguous": true,
+      "counted_packets": 719065,
+      "counted_bytes": 329534973,
+      "blocked_packets": 77833742,
+      "blocked_bytes": 37314385527,
+      "socket_drops": 2629,
+      "socket_drop_percent_of_offered": 0.3640775018383906,
+      "late_packets_outside_counted_windows": 0,
+      "discarded_final_partial_packets": 0,
+      "manifest_packet_reconciliation_residual": 0,
+      "counted_mean_pps": 269.54375814686216,
+      "counted_mean_Mbps": 0.9882177000771252,
+      "blocked_mean_pps": 29176.22096655138,
+      "blocked_mean_Mbps": 111.89931044218213,
+      "accounted_mean_pps": 29446.750213548577,
+      "counted_peak_window_pps": 133916.7356491089,
+      "counted_peak_window_Mbps": 514.2170786857604,
+      "accounted_peak_window_pps": 143557.78694152832,
+      "best_counted_sustained_interval": {
+        "start_elapsed_s": 855.772233728,
+        "end_elapsed_s": 915.901775872,
+        "duration_s": 60.129542144,
+        "selection_packets": 73992,
+        "selection_pps": 1230.543213231223,
+        "counted_pps": 1230.543213231223,
+        "counted_Mbps": 4.682224776063647,
+        "blocked_pps": 128440.37597200701,
+        "accounted_pps": 129681.34667192187
+      },
+      "best_accounted_sustained_interval": {
+        "start_elapsed_s": 855.235362816,
+        "end_elapsed_s": 915.36490496,
+        "duration_s": 60.129542144,
+        "selection_packets": 7819510,
+        "selection_pps": 130044.39616841929,
+        "counted_pps": 1229.2792754513878,
+        "counted_Mbps": 4.6771381582532605,
+        "blocked_pps": 128804.68940628426,
+        "accounted_pps": 130044.39616841929
+      }
+    },
+    {
+      "name": "usr-per-gen-3",
+      "path": "C:\\Dane\\Studia\\SEM_2\\eBPF-DDoS-Detection\\results\\data-from-tests\\usr-per-gen-3",
+      "source": "live",
+      "blocking": false,
+      "end_reason": "duration_reached",
+      "version": {
+        "commit": "3e8e5250a78027f39f2c4a7b39f643db9c3da744",
+        "modified": true,
+        "go": "go1.25.4"
+      },
+      "config": {
+        "window_length": "536.870912ms",
+        "max_empty": 0,
+        "counts": "heavykeeper",
+        "mode": "combined",
+        "hk_depth": 4,
+        "hk_width": 1024,
+        "hk_decay_base": 1.08,
+        "k": 10,
+        "seed": 42,
+        "cms_width": 1024,
+        "cms_depth": 4,
+        "iqr_base_threshold": 200,
+        "iqr_multiplier": 1.5,
+        "iqr_offset_multiplier": 2,
+        "iqr_min_samples": 4,
+        "iqr_max_history": 500,
+        "iqr_max_tracked_ips": 1000,
+        "iqr_ip_mode": "hybrid",
+        "iqr_max_shared_history": 5000,
+        "block": false
+      },
+      "source_sha256": {
+        "run.json": "ad3db0c0a2cb54edd98d2244fd7895b5561cbe23d18c64c4e7fe7245bc0bc077",
+        "windows.csv": "f2859e4ce419c43d58fae3b52cf3d6896cb206334829015d472779f74617c1e4"
+      },
+      "windows": 4969,
+      "window_s": 0.536870912,
+      "recorded_duration_s": 2667.711561728,
+      "contiguous": true,
+      "counted_packets": 78413475,
+      "counted_bytes": 37577092754,
+      "blocked_packets": 0,
+      "blocked_bytes": 0,
+      "socket_drops": 147310,
+      "socket_drop_percent_of_offered": 0.18750986014699725,
+      "late_packets_outside_counted_windows": 12,
+      "discarded_final_partial_packets": 0,
+      "manifest_packet_reconciliation_residual": 0,
+      "counted_mean_pps": 29393.535689895936,
+      "counted_mean_Mbps": 112.68712342996956,
+      "blocked_mean_pps": 0.0,
+      "blocked_mean_Mbps": 0.0,
+      "accounted_mean_pps": 29448.7553028831,
+      "counted_peak_window_pps": 141596.42159938812,
+      "counted_peak_window_Mbps": 544.8214113712311,
+      "accounted_peak_window_pps": 142553.82120609283,
+      "best_counted_sustained_interval": {
+        "start_elapsed_s": 855.772233728,
+        "end_elapsed_s": 915.901775872,
+        "duration_s": 60.129542144,
+        "selection_packets": 7735185,
+        "selection_pps": 128642.00730941126,
+        "counted_pps": 128642.00730941126,
+        "counted_Mbps": 494.09624681408917,
+        "blocked_pps": 0.0,
+        "accounted_pps": 129342.11242411818
+      },
+      "best_accounted_sustained_interval": {
+        "start_elapsed_s": 858.9934592,
+        "end_elapsed_s": 919.123001344,
+        "duration_s": 60.129542144,
+        "selection_packets": 7777932,
+        "selection_pps": 129352.92241828782,
+        "counted_pps": 128607.39869730813,
+        "counted_Mbps": 493.95434731351475,
+        "blocked_pps": 0.0,
+        "accounted_pps": 129352.92241828782
+      }
+    }
+  ],
+  "original_fragment_sha256": "1264763323bf541a6ec6051bc8179130ef0c9b531691071f0fda573f686d4ef9",
+  "original_summary_sha256": "fc65819bfcf876d9ef86a35e4eaf2fad27474ecb049cfc6cc8e882db81e59aac",
+  "latency_population": "evaluated=true and warm_up=false; differences computed as integer nanoseconds before conversion"
+}

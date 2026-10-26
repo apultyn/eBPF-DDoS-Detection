@@ -1,0 +1,80 @@
+\relax 
+\providecommand\hyper@newdestlabel[2]{}
+\providecommand\HyField@AuxAddToFields[1]{}
+\providecommand\HyField@AuxAddToCoFields[2]{}
+\@writefile{toc}{\contentsline {section}{\numberline {1}Results}{1}{section.1}\protected@file@percent }
+\newlabel{sec:results}{{1}{1}{Results}{section.1}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Runs presented in this section.}}{1}{table.caption.1}\protected@file@percent }
+\providecommand*\caption@xref[2]{\@setref\relax\@undefined{#1}}
+\newlabel{tab:runs}{{1}{1}{Runs presented in this section}{table.caption.1}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {1.1}Workload and Evaluation Coverage}{1}{subsection.1.1}\protected@file@percent }
+\newlabel{sec:res-workload}{{1.1}{1}{Workload and Evaluation Coverage}{subsection.1.1}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces Traffic profile of the replayed excerpt from saved offline PCAP-reference windows. Bottom: saved window-level ground truth from the corrected-label evaluation, using combined-window semantics.}}{1}{figure.caption.2}\protected@file@percent }
+\newlabel{fig:workload}{{1}{1}{Traffic profile of the replayed excerpt from saved offline PCAP-reference windows. Bottom: saved window-level ground truth from the corrected-label evaluation, using combined-window semantics}{figure.caption.2}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces Evaluation coverage and alignment, Raspberry Pi 400, blocking disabled. The evaluator requires a correlation of at least 0.9 and a peak ratio of at least 1.2.}}{2}{table.caption.4}\protected@file@percent }
+\newlabel{tab:coverage}{{2}{2}{Evaluation coverage and alignment, Raspberry Pi 400, blocking disabled. The evaluator requires a correlation of at least 0.9 and a peak ratio of at least 1.2}{table.caption.4}{}}
+\@writefile{toc}{\contentsline {paragraph}{Raspberry Pi 400}{2}{table.caption.4}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces Evaluation coverage and alignment on the FABRIC VM, blocking disabled. Both runs use the saved evaluator alignment; no onset correction is applied.}}{2}{table.caption.6}\protected@file@percent }
+\newlabel{tab:fabric-coverage}{{3}{2}{Evaluation coverage and alignment on the FABRIC VM, blocking disabled. Both runs use the saved evaluator alignment; no onset correction is applied}{table.caption.6}{}}
+\@writefile{toc}{\contentsline {paragraph}{FABRIC VM}{2}{table.caption.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {1.2}Packet Accounting and Loss}{3}{subsection.1.2}\protected@file@percent }
+\newlabel{sec:res-loss}{{1.2}{3}{Packet Accounting and Loss}{subsection.1.2}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces Packet accounting on the Raspberry Pi 400 with blocking disabled, as a share of the packets seen by the interface.}}{3}{figure.caption.8}\protected@file@percent }
+\newlabel{fig:loss}{{2}{3}{Packet accounting on the Raspberry Pi 400 with blocking disabled, as a share of the packets seen by the interface}{figure.caption.8}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces Packet accounting over the whole run with blocking disabled, Raspberry Pi 400. The denominator, \texttt  {rx\_packets} + \texttt  {rx\_drop}, is an estimate based on the interface counters. The kernel implementation has no capture socket and no late-drop mechanism. For reference, the evaluator's window loss, measured against the 78,567,754 packets of the excerpt over the scored period, is 73.4\% for userspace and 7.0\% for the kernel implementation.}}{3}{table.caption.9}\protected@file@percent }
+\newlabel{tab:loss}{{4}{3}{Packet accounting over the whole run with blocking disabled, Raspberry Pi 400. The denominator, \texttt {rx\_packets} + \texttt {rx\_drop}, is an estimate based on the interface counters. The kernel implementation has no capture socket and no late-drop mechanism. For reference, the evaluator's window loss, measured against the 78,567,754 packets of the excerpt over the scored period, is 73.4\% for userspace and 7.0\% for the kernel implementation}{table.caption.9}{}}
+\@writefile{toc}{\contentsline {paragraph}{Raspberry Pi 400}{3}{table.caption.9}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces Packet accounting on the FABRIC VM with blocking disabled. Shares use the whole-run interface-counter estimate; right: magnified non-counted components.}}{4}{figure.caption.11}\protected@file@percent }
+\newlabel{fig:fabric-loss}{{3}{4}{Packet accounting on the FABRIC VM with blocking disabled. Shares use the whole-run interface-counter estimate; right: magnified non-counted components}{figure.caption.11}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {5}{\ignorespaces Whole-run packet accounting on the FABRIC VM, blocking disabled. The denominator is $\Delta \mathrm  {rx\_packets}+\Delta \mathrm  {rx\_drop}$, an interface-counter estimate rather than an independently verified wire total. Identical observations of interface loss in \texttt  {rx\_drop} and \texttt  {rx\_out\_of\_buffer} are counted once.}}{4}{table.caption.12}\protected@file@percent }
+\newlabel{tab:fabric-loss}{{5}{4}{Whole-run packet accounting on the FABRIC VM, blocking disabled. The denominator is $\Delta \mathrm {rx\_packets}+\Delta \mathrm {rx\_drop}$, an interface-counter estimate rather than an independently verified wire total. Identical observations of interface loss in \texttt {rx\_drop} and \texttt {rx\_out\_of\_buffer} are counted once}{table.caption.12}{}}
+\@writefile{toc}{\contentsline {paragraph}{FABRIC VM}{4}{table.caption.12}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {1.3}CPU Utilisation}{5}{subsection.1.3}\protected@file@percent }
+\newlabel{sec:res-cpu}{{1.3}{5}{CPU Utilisation}{subsection.1.3}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {4}{\ignorespaces CPU breakdown on the Raspberry Pi 400 with blocking disabled, over the counted-flood intervals used in Table~\ref {tab:cpu}. Values are mean cores, split into detector process and rest of host, including software-interrupt time.}}{5}{figure.caption.14}\protected@file@percent }
+\newlabel{fig:cpu-host}{{4}{5}{CPU breakdown on the Raspberry Pi 400 with blocking disabled, over the counted-flood intervals used in Table~\ref {tab:cpu}. Values are mean cores, split into detector process and rest of host, including software-interrupt time}{figure.caption.14}{}}
+\@writefile{toc}{\contentsline {paragraph}{Raspberry Pi 400}{5}{figure.caption.14}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {6}{\ignorespaces CPU utilisation and counted packet rate with blocking disabled, Raspberry Pi 400. Host CPU time per counted packet is the whole-host CPU time during the flood divided by the packets counted in windows during the flood. It includes other host work and work on packets that were later dropped.}}{5}{table.caption.15}\protected@file@percent }
+\newlabel{tab:cpu}{{6}{5}{CPU utilisation and counted packet rate with blocking disabled, Raspberry Pi 400. Host CPU time per counted packet is the whole-host CPU time during the flood divided by the packets counted in windows during the flood. It includes other host work and work on packets that were later dropped}{table.caption.15}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {5}{\ignorespaces CPU time during each FABRIC run's counted flood, blocking disabled. The stacks show mean cores in the detector process and the rest of the host; the latter includes unrelated work and kernel packet processing.}}{6}{figure.caption.17}\protected@file@percent }
+\newlabel{fig:fabric-cpu}{{5}{6}{CPU time during each FABRIC run's counted flood, blocking disabled. The stacks show mean cores in the detector process and the rest of the host; the latter includes unrelated work and kernel packet processing}{figure.caption.17}{}}
+\@writefile{toc}{\contentsline {paragraph}{FABRIC VM}{6}{figure.caption.17}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {7}{\ignorespaces CPU utilisation and counted traffic on the FABRIC VM, blocking disabled. CPU percentages use ratios of summed contemporaneous counters. CPU time per counted packet includes all host work, including work on traffic subsequently dropped.}}{6}{table.caption.18}\protected@file@percent }
+\newlabel{tab:fabric-cpu}{{7}{6}{CPU utilisation and counted traffic on the FABRIC VM, blocking disabled. CPU percentages use ratios of summed contemporaneous counters. CPU time per counted packet includes all host work, including work on traffic subsequently dropped}{table.caption.18}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {1.4}Detection Quality}{7}{subsection.1.4}\protected@file@percent }
+\newlabel{sec:res-detection}{{1.4}{7}{Detection Quality}{subsection.1.4}{}}
+\@writefile{toc}{\contentsline {paragraph}{Raspberry Pi 400}{7}{section*.19}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {8}{\ignorespaces Window-level detection quality, Raspberry Pi 400, blocking disabled. The onset-aligned column is preliminary.}}{7}{table.caption.20}\protected@file@percent }
+\newlabel{tab:detection}{{8}{7}{Window-level detection quality, Raspberry Pi 400, blocking disabled. The onset-aligned column is preliminary}{table.caption.20}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {9}{\ignorespaces Share of scored windows flagged in each phase, Raspberry Pi 400, with phases taken from each run's own counted traffic. The phase split does not depend on the alignment to trace time.}}{7}{table.caption.21}\protected@file@percent }
+\newlabel{tab:phases}{{9}{7}{Share of scored windows flagged in each phase, Raspberry Pi 400, with phases taken from each run's own counted traffic. The phase split does not depend on the alignment to trace time}{table.caption.21}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {6}{\ignorespaces Window classification over time, Raspberry Pi 400.}}{8}{figure.caption.22}\protected@file@percent }
+\newlabel{fig:outcomes}{{6}{8}{Window classification over time, Raspberry Pi 400}{figure.caption.22}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {10}{\ignorespaces Saved window-level detection quality on the FABRIC VM, blocking disabled. Both columns retain the evaluator alignment and are provisional because its alignment criteria fail.}}{8}{table.caption.24}\protected@file@percent }
+\newlabel{tab:fabric-detection}{{10}{8}{Saved window-level detection quality on the FABRIC VM, blocking disabled. Both columns retain the evaluator alignment and are provisional because its alignment criteria fail}{table.caption.24}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {11}{\ignorespaces FABRIC scored-window flag rates by each recording's own traffic phase. The three half-open phase populations partition all 4,393 scored windows per run.}}{8}{table.caption.25}\protected@file@percent }
+\newlabel{tab:fabric-phases}{{11}{8}{FABRIC scored-window flag rates by each recording's own traffic phase. The three half-open phase populations partition all 4,393 scored windows per run}{table.caption.25}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {7}{\ignorespaces Provisional window classification over time on the FABRIC VM. Grey marks excluded windows. The shared trace clock uses saved offsets; both alignments retain correlation and peak-ambiguity warnings.}}{9}{figure.caption.26}\protected@file@percent }
+\newlabel{fig:fabric-outcomes}{{7}{9}{Provisional window classification over time on the FABRIC VM. Grey marks excluded windows. The shared trace clock uses saved offsets; both alignments retain correlation and peak-ambiguity warnings}{figure.caption.26}{}}
+\@writefile{toc}{\contentsline {paragraph}{FABRIC VM}{9}{figure.caption.26}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {1.5}Blocking Enabled}{9}{subsection.1.5}\protected@file@percent }
+\newlabel{sec:res-blocking}{{1.5}{9}{Blocking Enabled}{subsection.1.5}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {12}{\ignorespaces Runs with blocking enabled (\texttt  {usr-per-gen-1}, \texttt  {ker-per-gen-1}), Raspberry Pi 400. Percentages are of the packets seen by the interface. Blocklist entries expire after 60~s.}}{9}{table.caption.28}\protected@file@percent }
+\newlabel{tab:blocking}{{12}{9}{Runs with blocking enabled (\texttt {usr-per-gen-1}, \texttt {ker-per-gen-1}), Raspberry Pi 400. Percentages are of the packets seen by the interface. Blocklist entries expire after 60~s}{table.caption.28}{}}
+\@writefile{toc}{\contentsline {paragraph}{Raspberry Pi 400}{9}{table.caption.28}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {13}{\ignorespaces Blocking-enabled FABRIC runs, \texttt  {usr-per-gen-1} and \texttt  {ker-per-gen-1}. Percentages use the whole-run interface-counter estimate. New block events exclude refreshes. Per-source attack identity cannot be verified without the corrected flow-label file.}}{10}{table.caption.30}\protected@file@percent }
+\newlabel{tab:fabric-blocking}{{13}{10}{Blocking-enabled FABRIC runs, \texttt {usr-per-gen-1} and \texttt {ker-per-gen-1}. Percentages use the whole-run interface-counter estimate. New block events exclude refreshes. Per-source attack identity cannot be verified without the corrected flow-label file}{table.caption.30}{}}
+\@writefile{toc}{\contentsline {paragraph}{FABRIC VM}{10}{table.caption.30}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {1.6}Memory and Decision Delay}{10}{subsection.1.6}\protected@file@percent }
+\newlabel{sec:res-other}{{1.6}{10}{Memory and Decision Delay}{subsection.1.6}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {14}{\ignorespaces Memory (blocking enabled) and decision delay (blocking disabled), Raspberry Pi 400.}}{10}{table.caption.32}\protected@file@percent }
+\newlabel{tab:other}{{14}{10}{Memory (blocking enabled) and decision delay (blocking disabled), Raspberry Pi 400}{table.caption.32}{}}
+\@writefile{toc}{\contentsline {paragraph}{Raspberry Pi 400}{10}{table.caption.32}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {15}{\ignorespaces FABRIC memory with blocking enabled and local decision timing with blocking disabled. Memory medians are sample-based; separately charged maps are added once. Timing uses evaluated windows with detector \texttt  {warm\_up=false}, distinct from the 75-window scoring mask.}}{11}{table.caption.34}\protected@file@percent }
+\newlabel{tab:fabric-other}{{15}{11}{FABRIC memory with blocking enabled and local decision timing with blocking disabled. Memory medians are sample-based; separately charged maps are added once. Timing uses evaluated windows with detector \texttt {warm\_up=false}, distinct from the 75-window scoring mask}{table.caption.34}{}}
+\@writefile{toc}{\contentsline {paragraph}{FABRIC VM}{11}{table.caption.34}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {1.7}Summary}{11}{subsection.1.7}\protected@file@percent }
+\newlabel{sec:res-summary}{{1.7}{11}{Summary}{subsection.1.7}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {16}{\ignorespaces Key observed differences, one run per configuration, blocking disabled unless stated. $^{a}$Pi userspace onset-aligned. $^{b}$FABRIC uses the saved evaluator alignments; both remain provisional.}}{11}{table.caption.35}\protected@file@percent }
+\newlabel{tab:summary}{{16}{11}{Key observed differences, one run per configuration, blocking disabled unless stated. $^{a}$Pi userspace onset-aligned. $^{b}$FABRIC uses the saved evaluator alignments; both remain provisional}{table.caption.35}{}}
+\gdef \@abspage@last{11}

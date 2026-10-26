@@ -1,0 +1,144 @@
+{
+  "figure": 11,
+  "testbed": "Raspberry Pi 400",
+  "status": "Updated evaluations with saved manual trace offsets.",
+  "alignment_methods": [
+    "manual"
+  ],
+  "alignment_warnings": {
+    "Userspace": [],
+    "Kernel": []
+  },
+  "prediction": "window: malicious column, not window_or_ip",
+  "axis": "Trace elapsed minutes from 2018-12-01T14:21:52.153161000Z; ends at 2018-12-01T15:01:51.999846000Z.",
+  "window_ns": 536870912,
+  "effective_span_ns": 1073741824,
+  "ground_truth_source": "results/data-raspberry/eval-ker-acc-gen-1-adjusted",
+  "ground_truth_groups": [
+    {
+      "start_ns": 1543674112153161000,
+      "end_ns": 1543674964522198272,
+      "state": "Benign"
+    },
+    {
+      "start_ns": 1543674964522198272,
+      "end_ns": 1543676511999846000,
+      "state": "Attack"
+    }
+  ],
+  "grey": "Saved excluded windows and intervals with no aligned native windows; these causes remain distinct in the data.",
+  "limitations": [
+    "Offsets and their recorded diagnostics are used verbatim from the evaluations. This plot does not independently validate replay timing or refit offsets.",
+    "The top truth strip uses the kernel evaluation's native grid because it covers the complete excerpt. Each outcome is computed against its own saved native-grid truth.",
+    "The two native grids are not resampled or paired, and have different scored-window counts; sub-window differences at truth transitions are expected.",
+    "Combined-mode labels apply to the current and previous window. The strip colors each current-window bin, approximately 0.537 seconds, using a 1.074-second effective span.",
+    "Grey intervals without native windows mean no windows mapped there under the saved offset, not a benign verdict or proven lack of physical capture.",
+    "The original corrected flow labels and packet trace remain remote; their saved adjusted evaluation outputs are used here.",
+    "Short states retain their actual durations. PNG rendering cannot reliably expose every isolated subpixel window; PDF/SVG and CSV preserve the intervals."
+  ],
+  "needed_for_validated_time_comparison": [
+    "Sender replay logs and independent packet/traffic landmarks validating trace-to-live timing throughout each run.",
+    "A corrected evaluation after resolving replay timing, with original corrected flow labels and trace provenance; rerun synchronized replay if a constant offset cannot fit."
+  ],
+  "runs": [
+    {
+      "implementation": "Userspace",
+      "directory": "results/data-raspberry/eval-usr-acc-gen-1-adjusted",
+      "trace_start_ns": 1543674112153161000,
+      "trace_end_ns": 1543676511999846000,
+      "window_ns": 536870912,
+      "effective_span_ns": 1073741824,
+      "scores": {
+        "TN": 420,
+        "FP": 12,
+        "TP": 2191,
+        "FN": 691
+      },
+      "saved_counts": {
+        "windows_total": 4918,
+        "excluded_before_excerpt": 0,
+        "excluded_after_excerpt": 1528,
+        "excluded_not_evaluated": 1,
+        "excluded_warmup": 75,
+        "windows_scored": 3314,
+        "attack_window_share": 0.8696439348219674,
+        "attack_intervals": 251,
+        "offset_ns": 249266234898618176,
+        "mode": "combined",
+        "window_length_ns": 536870912,
+        "span_ns": 1073741824,
+        "warmup": 75
+      },
+      "alignment": {
+        "offset_ns": 249266234898618176,
+        "method": "manual"
+      },
+      "warnings": [
+        "the capture socket dropped 33356522 packets",
+        "the interface dropped 18201335 packets"
+      ],
+      "first_mapped_window_elapsed_s": 579.661421464,
+      "unobserved_prefix_s": 579.661421464,
+      "version": {
+        "commit": "f8824908c54d90a3f9de3420ede6850f42c6f01f",
+        "modified": true,
+        "go": "go1.25.4"
+      },
+      "source_sha256": {
+        "results/data-raspberry/eval-usr-acc-gen-1-adjusted/metrics.json": "caea026bdc766a2b67534c0477e85f2a549d39841a7ad98eecb9b54c2bcdbdc7",
+        "results/data-raspberry/eval-usr-acc-gen-1-adjusted/windows.csv": "657237ef6c27f465b3992e737c83bd0c5ce036ec4d6152c0fb6e00d38e6f6026",
+        "results/data-raspberry/usr-acc-gen-1/run.json": "dd7e238c214b6ab0af7dca3d5248aa291df6f192b8b8ab41391fcc2383dcf79a",
+        "results/data-raspberry/usr-acc-gen-1/windows.csv": "879f0dc7632f01d0d5c36a95aec8a93f9fd07d7ce82b4bc8051c43361f318c84"
+      }
+    },
+    {
+      "implementation": "Kernel",
+      "directory": "results/data-raspberry/eval-ker-acc-gen-1-adjusted",
+      "trace_start_ns": 1543674112153161000,
+      "trace_end_ns": 1543676511999846000,
+      "window_ns": 536870912,
+      "effective_span_ns": 1073741824,
+      "scores": {
+        "TN": 1477,
+        "FP": 34,
+        "TP": 2577,
+        "FN": 305
+      },
+      "saved_counts": {
+        "windows_total": 4973,
+        "excluded_before_excerpt": 98,
+        "excluded_after_excerpt": 407,
+        "excluded_not_evaluated": 0,
+        "excluded_warmup": 75,
+        "windows_scored": 4393,
+        "attack_window_share": 0.6560437058957432,
+        "attack_intervals": 251,
+        "offset_ns": 249275979665349376,
+        "mode": "combined",
+        "window_length_ns": 536870912,
+        "span_ns": 1073741824,
+        "warmup": 75
+      },
+      "alignment": {
+        "offset_ns": 249275979665349376,
+        "method": "manual"
+      },
+      "warnings": [
+        "the interface dropped 5238189 packets"
+      ],
+      "first_mapped_window_elapsed_s": 0.0,
+      "unobserved_prefix_s": 0.0,
+      "version": {
+        "commit": "f8824908c54d90a3f9de3420ede6850f42c6f01f",
+        "modified": true,
+        "go": "go1.25.4"
+      },
+      "source_sha256": {
+        "results/data-raspberry/eval-ker-acc-gen-1-adjusted/metrics.json": "45bdfaa1752ce1e9b0199d94cecd32ec76f43f30ea4e6b7c247b1416b16906f1",
+        "results/data-raspberry/eval-ker-acc-gen-1-adjusted/windows.csv": "e4f3b3b0eb9330128045b124d194ad9aa442c623a093a928faeeeac9b44ed883",
+        "results/data-raspberry/ker-acc-gen-1/run_kernelspace.json": "05c525dfaed13853ac2d88a675937c2ca64825af1da4faf42fd05a428448b300",
+        "results/data-raspberry/ker-acc-gen-1/windows.csv": "962381283a1fa7e3b0fa25fed5bc8febaf93f889ecab0f17121a59c080f698ad"
+      }
+    }
+  ]
+}
