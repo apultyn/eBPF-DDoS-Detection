@@ -19,6 +19,45 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from . import schema
+
+
+def read_labels(path, batch_size: int = 65536) -> pd.DataFrame:
+    """Read evaluation labels using one batch plus merged intervals of memory.
+
+    Overlapping flows with the same attack label have identical ground-truth
+    meaning once merged. Preserve all disjoint intervals and the original
+    overall bounds (including benign flows), so scoring, per-label latency,
+    and time-range warnings are unchanged. Input need not be time-sorted.
+    """
+    merged: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+    first, last = None, None
+    for batch in schema.iter_intervals(path, batch_size):
+        if not batch.num_rows:
+            continue
+        # Only four small columns become pandas objects, never source_file.
+        labels = batch.select(["start_ns", "end_ns", "label", "is_attack"]).to_pandas()
+        lo, hi = int(labels["start_ns"].min()), int(labels["end_ns"].max())
+        first = lo if first is None else min(first, lo)
+        last = hi if last is None else max(last, hi)
+        for name, (s, e) in intervals_by_label(labels).items():
+            if name in merged:
+                old_s, old_e = merged[name]
+                s, e = merge_intervals(np.concatenate([old_s, s]), np.concatenate([old_e, e]))
+            merged[name] = s, e
+
+    parts = [pd.DataFrame({"start_ns": s, "end_ns": e, "label": name, "is_attack": True})
+             for name, (s, e) in sorted(merged.items())]
+    if first is not None:
+        # This non-attack row only preserves min/max for the coverage warning;
+        # benign interval geometry has no effect on window ground truth.
+        parts.append(pd.DataFrame({"start_ns": [first], "end_ns": [last],
+                                   "label": ["BENIGN"], "is_attack": [False]}))
+    if not parts:
+        return pd.DataFrame({"start_ns": pd.Series(dtype="int64"), "end_ns": pd.Series(dtype="int64"),
+                             "label": pd.Series(dtype="object"), "is_attack": pd.Series(dtype="bool")})
+    return pd.concat(parts, ignore_index=True)
+
 
 def merge_intervals(starts, ends) -> tuple[np.ndarray, np.ndarray]:
     """Merge closed intervals that overlap or touch into disjoint ones,

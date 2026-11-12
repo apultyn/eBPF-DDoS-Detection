@@ -160,6 +160,16 @@ counting as correctly judged normal windows.
 
 Evaluate the reference and each live run on its own:
 
+`--reference` is a results **directory** containing `run.json` and
+`windows.csv`; `--excerpt` is the small `.excerpt.json`, not the PCAP.
+The evaluator checks these before loading labels and prints its current
+stage to stderr. Label Parquet files are read in batches of 65,536 rows,
+projecting only required fields and merging overlapping attack intervals
+per label as they are read. Per-flow IP addresses and other unused columns
+are not loaded. Scoring and latency retain the same interval semantics.
+Alignment caps its coarse grid and reports when a longer capture requires
+a coarser grid; final offset refinement still uses the configured fine step.
+
 ```bash
 E=excerpts/03-11-1300.excerpt.json
 R=results/03-11-1300

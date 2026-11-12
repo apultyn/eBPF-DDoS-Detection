@@ -1,11 +1,49 @@
 package heavykeeper
 
 import (
+	"os"
+	"regexp"
+	"strconv"
 	"testing"
 	"unsafe"
 
 	"github.com/apultyn/eBPF-DDoS-Detection/kernelspace/flow"
 )
+
+// Read the C definitions so changes to the kernel map sizes cannot leave
+// the Go reader indexing beyond the end of a map.
+func TestKernelMapDimensions(t *testing.T) {
+	source, err := os.ReadFile("heavy_keeper.c")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name string
+		want int
+	}{
+		{"DEPTH", Depth},
+		{"WIDTH", Width},
+		{"K_SIZE", K},
+		{"SLOTS", Slots},
+		{"BLOCKLIST_SIZE", BlocklistSize},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pattern := regexp.MustCompile(`(?m)^\s*#define\s+` + tc.name + `\s+(\d+)\b`)
+			match := pattern.FindSubmatch(source)
+			if match == nil {
+				t.Fatalf("missing integer definition of %s in heavy_keeper.c", tc.name)
+			}
+			got, err := strconv.Atoi(string(match[1]))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tc.want {
+				t.Errorf("heavy_keeper.c %s = %d, Go reader expects %d", tc.name, got, tc.want)
+			}
+		})
+	}
+}
 
 // The mirrors must have the exact sizes of the C structs, or every map
 // read decodes garbage.

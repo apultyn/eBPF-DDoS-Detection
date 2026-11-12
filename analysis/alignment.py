@@ -34,6 +34,11 @@ FINE_STEP_NS = 1_000_000  # 1 ms
 MIN_CORRELATION = 0.9
 MIN_PEAK_RATIO = 1.2
 
+# Cap the FFT and interpolation arrays even when a reference spans a whole
+# day (or contains a large timestamp gap). Refine the offset at the requested
+# fine resolution after adapting the coarse grid.
+MAX_GRID_BINS = 1 << 19
+
 
 @dataclass
 class Series:
@@ -105,10 +110,18 @@ def estimate_offset(ref: Series, live: Series,
                     coarse_step_ns: int = COARSE_STEP_NS,
                     fine_step_ns: int = FINE_STEP_NS) -> Alignment:
     """Offset (wall - trace) that best matches live packets per window to the reference."""
-    step = coarse_step_ns
+    if coarse_step_ns <= 0 or fine_step_ns <= 0:
+        raise ValueError("alignment steps must be positive")
+    if not ref.start_ns.size or not live.start_ns.size:
+        raise ValueError("cannot align an empty reference or live run")
 
     r0, r1 = int(ref.start_ns[0]), int(ref.end_ns.max())
     l0, l1 = int(live.start_ns[0]), int(live.end_ns.max())
+    if r1 <= r0 or l1 <= l0:
+        raise ValueError("alignment runs must have positive time spans")
+    span = (r1 - r0) + (l1 - l0)
+    # Integer ceiling avoids overflow/rounding when timestamps are far apart.
+    step = max(coarse_step_ns, (span + MAX_GRID_BINS - 3) // (MAX_GRID_BINS - 2))
     nr, nl = math.ceil((r1 - r0) / step), math.ceil((l1 - l0) / step)
 
     r = ref.on_grid(r0, step, nr)
@@ -147,12 +160,22 @@ def estimate_offset(ref: Series, live: Series,
         i = int(np.argmax(scores))
         return int(candidates[i]), float(scores[i])
 
-    mid_step = 5 * fine_step_ns
-    offset, _ = best_of(coarse_offset, window, mid_step)
+    mid_step = max(5 * fine_step_ns, step // 5)
+    offset, _ = best_of(coarse_offset, max(window, step), mid_step)
+    while mid_step > 5 * fine_step_ns:
+        next_step = max(5 * fine_step_ns, mid_step // 5)
+        offset, _ = best_of(offset, mid_step, next_step)
+        mid_step = next_step
     offset, corr = best_of(offset, mid_step, fine_step_ns)
 
     a = Alignment(offset_ns=offset, correlation=corr if corr > -2 else float("nan"),
                   peak_ratio=ratio, coarse_step_ns=step, fine_step_ns=fine_step_ns)
+
+    if step > coarse_step_ns:
+        a.warnings.append(
+            f"coarse alignment grid increased to {step / 1e6:g} ms to limit memory; "
+            "fine refinement is unchanged. Check that the reference covers the same excerpt"
+        )
 
     if math.isnan(a.correlation) or a.correlation < MIN_CORRELATION:
         a.warnings.append(

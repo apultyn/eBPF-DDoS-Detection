@@ -9,7 +9,8 @@ The day's files are taken in natural order, the order the detector reads
 them in, and only those overlapping the requested interval are used. They
 are concatenated in that order (mergecap -a), the interval is cut out
 (editcap -A/-B), and the MAC addresses are optionally rewritten for FABRIC
-(tcprewrite). The result is checked with capturecheck and described in
+(tcprewrite). These tools are connected by pipes, so only the final excerpt
+is stored on disk. The result is checked with capturecheck and described in
 <out>.excerpt.json, which the analysis reads with --excerpt.
 
 Gaps between files are kept in the excerpt, and tcpreplay waits through
@@ -53,6 +54,7 @@ DEFAULT_WINDOW_NS = 1 << 29
 DEFAULT_MIN_BENIGN_NS = 120 * 10**9
 
 LINKTYPE_ETHERNET = 1
+MAX_SUMMARY_BYTES = 64 * 1024
 
 
 class ExcerptError(Exception):
@@ -72,10 +74,64 @@ class Tools:
 
     def run(self, cmd: list[str], capture: bool = False) -> str:
         self.commands.append(cmd)
-        out = subprocess.run(cmd, capture_output=True, text=True)
-        if out.returncode != 0:
-            raise ExcerptError(f"{' '.join(cmd)} failed ({out.returncode}): {out.stderr.strip() or out.stdout.strip()}")
-        return out.stdout if capture else ""
+        if not capture:
+            # Tool warnings go straight to the terminal, never a growing buffer.
+            out = subprocess.run(cmd)
+            if out.returncode != 0:
+                raise ExcerptError(f"{' '.join(cmd)} failed ({out.returncode}); see tool output above")
+            return ""
+
+        # capturecheck prints a small summary. Bound even this capture so an
+        # unexpectedly noisy tool cannot consume RAM in proportion to packets.
+        tail = bytearray()
+        total = 0
+        with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT) as proc:
+            try:
+                while chunk := proc.stdout.read(8192):
+                    total += len(chunk)
+                    tail.extend(chunk)
+                    del tail[:-MAX_SUMMARY_BYTES]
+                rc = proc.wait()
+            except BaseException:
+                proc.kill()
+                proc.wait()
+                raise
+        summary = tail.decode("utf-8", errors="replace").replace("\r\n", "\n")
+        if rc != 0:
+            raise ExcerptError(f"{' '.join(cmd)} failed ({rc}): {summary.strip()}")
+        if total > MAX_SUMMARY_BYTES:
+            raise ExcerptError(f"{' '.join(cmd)}: summary exceeds {MAX_SUMMARY_BYTES} bytes")
+        return summary
+
+    def pipeline(self, commands: list[list[str]]) -> None:
+        """Stream PCAP bytes between tools; check every stage, including upstream.
+
+        Stderr is inherited so warnings are visible without buffering them.
+        Close parent copies of pipes so a failed consumer cannot leave its
+        producer blocked, and reap all children on failure or interruption.
+        """
+        processes: list[subprocess.Popen] = []
+        try:
+            for i, cmd in enumerate(commands):
+                self.commands.append(cmd)
+                previous = processes[-1].stdout if processes else None
+                proc = subprocess.Popen(cmd, stdin=previous,
+                                        stdout=subprocess.PIPE if i < len(commands) - 1 else None)
+                processes.append(proc)
+                if previous is not None:
+                    previous.close()
+            for cmd, proc in reversed(list(zip(commands, processes))):
+                rc = proc.wait()
+                if rc != 0:
+                    raise ExcerptError(f"{' '.join(cmd)} failed ({rc}); see tool output above")
+        finally:
+            for proc in processes:
+                if proc.poll() is None:
+                    proc.kill()
+            for proc in processes:
+                if proc.stdout is not None:
+                    proc.stdout.close()
+                proc.wait()
 
 
 # ---------------------------------------------------------------- time
@@ -346,21 +402,23 @@ def run(args: argparse.Namespace, tools: Tools) -> dict:
         else:
             tools.log("warning: no --labels given, so the excerpt's first minutes were not checked for attacks")
 
-        merged = tmp / "merged.pcap"
-        cut = tmp / "cut.pcap"
-        tools.run([tools.mergecap, "-F", "pcap", "-a", "-w", str(merged)] + [str(s.path) for s in selected])
-        tools.run([tools.editcap, "-F", "pcap", "-A", format_ns(start), "-B", format_ns(end), str(merged), str(cut)])
-
-        final = cut
+        final = tmp / "excerpt.pcap"
+        commands = [
+            [tools.mergecap, "-F", "pcap", "-a", "-w", "-"] + [str(s.path) for s in selected],
+            [tools.editcap, "-F", "pcap", "-A", format_ns(start), "-B", format_ns(end),
+             "-", "-" if args.rewrite_mac else str(final)],
+        ]
         if args.rewrite_mac:
             dst, src = args.rewrite_mac.split(",")
-            final = tmp / "rewritten.pcap"
             cmd = [tools.tcprewrite, f"--enet-dmac={dst}", f"--enet-smac={src}",
-                   f"--infile={cut}", f"--outfile={final}"]
+                   "--infile=-", f"--outfile={final}"]
             if lt != LINKTYPE_ETHERNET:
                 cmd.insert(1, "--dlt=enet")
-            tools.run(cmd)
+            commands.append(cmd)
+        tools.log("streaming " + " -> ".join(Path(c[0]).name for c in commands) + " (one PCAP on disk)")
+        tools.pipeline(commands)
 
+        tools.log("checking the finished excerpt")
         result = capturecheck(tools, final, tmp)
         if result.first_ns is None:
             raise ExcerptError("the excerpt has no IP packets")

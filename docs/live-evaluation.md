@@ -93,6 +93,15 @@ python3 scripts/excerpt.py --input PCAP-03-11/ --out excerpts/03-11-1300.pcap \
 
 `ip link show <if>` prints an interface's MAC address (`link/ether`).
 
+The merge, time cut, and optional MAC rewrite stream through pipes. Only one
+temporary PCAP is written, in a hidden `.excerpt-*` directory beside `--out`,
+and it is moved to the output path after validation. Allow disk space for the
+finished excerpt (Ethernet conversion can increase its size). Older versions
+kept merged, cut, and rewritten copies simultaneously, potentially using about
+three times the selected data's size. Ordinary failures clean up the temporary
+directory; a forced kill or machine crash can leave it behind. Inspect hidden
+`.excerpt-*` directories for abandoned data before retrying a failed run.
+
 The script refuses an excerpt when:
 
 - **a gap between two files is longer than two windows**, or files overlap.
