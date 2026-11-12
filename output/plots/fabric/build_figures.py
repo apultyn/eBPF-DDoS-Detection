@@ -23,10 +23,10 @@ REPO = OUT.parents[2]
 DATA = REPO / "results" / "data-fabric"
 RUNS = (("Userspace", "live", "usr-acc-gen-1"), ("Kernel", "xdp", "ker-acc-gen-1"))
 SEGMENTS = (
-    ("counted_in_windows", "Successfully received", "#2864A0"),
-    ("interface_drops", "NIC drops", "#E0A34B"),
-    ("socket_drops", "Socket drops", "#C76552"),
-    ("late_drops", "Late drops", "#8069A6"),
+    ("counted_in_windows", "Counted in windows", "#2864A0"),
+    ("interface_drops", "Dropped at the network interface", "#E0A34B"),
+    ("socket_drops", "Dropped by the capture socket", "#C76552"),
+    ("late_drops", "Discarded as late", "#8069A6"),
     ("unaccounted", "Unaccounted", "#717A85"),
 )
 
